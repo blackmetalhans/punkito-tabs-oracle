@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "punkito-tabs-oracle"
+version = "0.1.0"
+authors = [
+{ name = 'Hans "Punkito" Soriano', email = "blackmetalhans@gmail.com" }
+]
+description = "Punkito Tabs Oracle for bass - Bilingual DSP and ML pipeline for bass isolation and fretboard mapping."
+readme = "README.md"
+requires-python = ">=3.9,<3.11"
+classifiers = [
+"Programming Language :: Python :: 3",
+"License :: OSI Approved :: MIT License",
+"Operating System :: OS Independent",
+"Topic :: Multimedia :: Sound/Audio :: Analysis",
+]
+dependencies = [
+"numpy>=1.22.4,<2.0.0",
+"librosa>=0.8.0,<0.10.0",
+"spleeter>=2.4.0,<2.4.1",
+"scipy>=1.8.0",
+"dynaconf>=3.1.0"
+]
+
+[project.optional-dependencies]
+dev = [
+"pytest>=7.0.0",
+]
+
+[project.scripts]
+punkito-tabs = "punkito_tabs_oracle.cli:main"
+
+[tool.black]
+line-length = 88
+target-version = ['py39']

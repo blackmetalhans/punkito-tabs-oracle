@@ -1,0 +1,8 @@
+{
+    "CLI_DESC": "Punkito Tabs Oracle - Motor avanzado de separación de fuentes y transcripción para bajistas.",
+    "STATUS_LOAD_MODEL": "[*] Inicializando pesos neuronales para separación de fuentes U-Net...",
+    "STATUS_DSP_START": "[*] Computando representaciones espectrales y ejecutando tracking pYIN...",
+    "STATUS_TAB_GEN": "[*] Resolviendo restricciones físicas de la mano para construir tablatura...",
+    "ERROR_FILE_NOT_FOUND": "[-] Crítico: El archivo de audio '{}' no existe.",
+    "SUCCESS_PIPELINE": "[+] Separación de fuentes y transcripción completadas con éxito."
+}

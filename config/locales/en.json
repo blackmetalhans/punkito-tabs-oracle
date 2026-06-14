@@ -1,0 +1,8 @@
+{
+    "CLI_DESC": "Punkito Tabs Oracle - Advanced audio separation and transcription engine for bassists.",
+    "STATUS_LOAD_MODEL": "[*] Initializing neural weights for U-Net stem separation...",
+    "STATUS_DSP_START": "[*] Computing spectrogram representations and running pYIN tracking...",
+    "STATUS_TAB_GEN": "[*] Resolving physical hand constraints to build optimal tablature...",
+    "ERROR_FILE_NOT_FOUND": "[-] Critical: Audio file '{}' does not exist.",
+    "SUCCESS_PIPELINE": "[+] Source separation and transcription completed successfully."
+}
