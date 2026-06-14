@@ -12,31 +12,13 @@ Arquitectura Técnica del Sistema
 
 El motor opera como un pipeline de procesamiento desacoplado en múltiples etapas:
 
-[ Audio Polifónico (.mp3/.wav) ]
-               │
-               ▼
-   ┌───────────────────────┐
-   │ Separador de Fuentes  │  (Aislamiento de tallos via Spleeter / TensorFlow)
-   └───────────────────────┘
-               │
-               ▼
-     [ Tallo de Bajo (.wav) ]
-               │
-               ▼
-   ┌───────────────────────┐
-   │    Detección de Pitch  │  (Extracción de Frecuencia Fundamental via pYIN)
-   └───────────────────────┘
-               │
-               ▼
-      [ Serie Temporal f0 ]
-               │
-               ▼
-   ┌───────────────────────┐
-   │ Ruteador de Trastes   │  (Optimizador Ergónomico de Caminos Heurísticos)
-   └───────────────────────┘
-               │
-               ▼
-  [ Tablatura ASCII Optimizada ]
+flowchart TD
+    A["Audio Polifónico (.mp3/.wav)"] --> B["Separador de Fuentes (Spleeter / TensorFlow)"]
+    B --> C["Tallo de Bajo (.wav)"]
+    C --> D["Detección de Pitch (pYIN via Librosa)"]
+    D --> E["Serie Temporal f0"]
+    E --> F["Ruteador de Trastes (Algoritmo de Costos)"]
+    F --> G["Tablatura ASCII Optimizada"]
 
 
 Fundamentos Algorítmicos
@@ -45,7 +27,7 @@ Fundamentos Algorítmicos
 
 Utilizando un modelo U-Net Convolucional Profundo entrenado con el conjunto de datos MusDB18, el motor calcula la Transformada de Fourier de Tiempo Corto (STFT) de la señal de entrada:
 
-$$X(t, f) = \int^{-\infty}_{\infty} x(\tau) w(\tau - t) e^{-j 2 \pi f \tau} d\tau$$
+$$X(t, f) = \int_{-\infty}^{\infty} x(\tau) w(\tau - t) e^{-j 2 \pi f \tau} d\tau$$
 
 Donde $w(\tau - t)$ representa la ventana de análisis (ej. Hann window). La red neuronal convolucional predice máscaras suaves sobre el espectrograma de magnitud para aislar la energía espectral del bajo, reconstruye la forma de onda en el dominio del tiempo usando STFT inversa, y exporta un archivo monoaural bass.wav limpio a $44100 \text{ Hz}$.
 

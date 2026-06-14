@@ -12,31 +12,13 @@ Technical & Algorithmic Architecture
 
 The engine operates as a decoupled, multi-stage processing pipeline:
 
-[ Polyphonic Audio (.mp3/.wav) ]
-               │
-               ▼
-   ┌───────────────────────┐
-   │  U-Net Stem Separator │  (Source Isolation via Spleeter / TensorFlow)
-   └───────────────────────┘
-               │
-               ▼
-       [ Bass Stem (.wav) ]
-               │
-               ▼
-   ┌───────────────────────┐
-   │    pYIN Pitch Tracker │  (DSP Fundamental Frequency Extraction)
-   └───────────────────────┘
-               │
-               ▼
-        [ f0 Time Series ]
-               │
-               ▼
-   ┌───────────────────────┐
-   │ Heuristic Fret Router │  (Dynamic Programming Ergonomic Optimizer)
-   └───────────────────────┘
-               │
-               ▼
-   [ Optimized ASCII Tablature ]
+flowchart TD
+    A["Polyphonic Audio (.mp3/.wav)"] --> B["U-Net Stem Separator (Spleeter / TensorFlow)"]
+    B --> C["Bass Stem (.wav)"]
+    C --> D["pYIN Pitch Tracker (Librosa)"]
+    D --> E["f0 Time Series"]
+    E --> F["Heuristic Fret Router (Dynamic Programming)"]
+    F --> G["Optimized ASCII Tablature"]
 
 
 Mathematical Foundations
@@ -45,7 +27,7 @@ Mathematical Foundations
 
 Using a Deep Convolutional U-Net model trained on the MusDB18 dataset, the engine computes the Short-Time Fourier Transform (STFT) of the polyphonic input signal:
 
-$$X(t, f) = \int^{-\infty}_{\infty} x(\tau) w(\tau - t) e^{-j 2 \pi f \tau} d\tau$$
+$$X(t, f) = \int_{-\infty}^{\infty} x(\tau) w(\tau - t) e^{-j 2 \pi f \tau} d\tau$$
 
 Where $w(\tau - t)$ is the analysis window (e.g., Hann window). The convolutional network predicts soft-masks over the magnitude spectrogram to isolate the bass spectral energy, reconstructs the time-domain waveform using the inverse STFT, and outputs a clean $44100 \text{ Hz}$ mono bass.wav file.
 
