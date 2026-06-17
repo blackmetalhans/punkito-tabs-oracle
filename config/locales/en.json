@@ -1,8 +1,12 @@
 {
     "CLI_DESC": "Punkito Tabs Oracle - Advanced audio separation and transcription engine for bassists.",
+    "STATUS_VERIFYING_DEPS": "[*] Checking system dependencies (ffmpeg)...",
     "STATUS_LOAD_MODEL": "[*] Initializing neural weights for U-Net stem separation...",
     "STATUS_DSP_START": "[*] Computing spectrogram representations and running pYIN tracking...",
     "STATUS_TAB_GEN": "[*] Resolving physical hand constraints to build optimal tablature...",
-    "ERROR_FILE_NOT_FOUND": "[-] Critical: Audio file '{}' does not exist.",
+    "ERROR_FILE_NOT_FOUND": "[-] Critical error: Audio file '{}' does not exist.",
+    "ERROR_INVALID_EXTENSION": "[-] Critical error: File extension '{}' is invalid. Supported formats: {}.",
+    "ERROR_FFMPEG_MISSING": "[-] Critical error: 'ffmpeg' executable was not found on your system's PATH. Please install ffmpeg to decode MP3/WAV files.",
+    "ERROR_NO_AUDIO_PROVIDED": "[-] Error: No audio file was specified.",
     "SUCCESS_PIPELINE": "[+] Source separation and transcription completed successfully."
 }

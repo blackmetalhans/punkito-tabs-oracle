@@ -1,8 +1,12 @@
 {
     "CLI_DESC": "Punkito Tabs Oracle - Motor avanzado de separación de fuentes y transcripción para bajistas.",
+    "STATUS_VERIFYING_DEPS": "[*] Verificando dependencias del sistema (ffmpeg)...",
     "STATUS_LOAD_MODEL": "[*] Inicializando pesos neuronales para separación de fuentes U-Net...",
     "STATUS_DSP_START": "[*] Computando representaciones espectrales y ejecutando tracking pYIN...",
     "STATUS_TAB_GEN": "[*] Resolviendo restricciones físicas de la mano para construir tablatura...",
-    "ERROR_FILE_NOT_FOUND": "[-] Crítico: El archivo de audio '{}' no existe.",
+    "ERROR_FILE_NOT_FOUND": "[-] Error crítico: El archivo de audio '{}' no existe.",
+    "ERROR_INVALID_EXTENSION": "[-] Error crítico: La extensión '{}' es inválida. Formatos compatibles: {}.",
+    "ERROR_FFMPEG_MISSING": "[-] Error crítico: El ejecutable 'ffmpeg' no se encontró en el PATH del sistema. Instala ffmpeg para poder decodificar archivos MP3/WAV.",
+    "ERROR_NO_AUDIO_PROVIDED": "[-] Error: No se especificó ningún archivo de audio.",
     "SUCCESS_PIPELINE": "[+] Separación de fuentes y transcripción completadas con éxito."
 }
