@@ -83,17 +83,32 @@ def ejecutar_pipeline(audio_path: Path, locales: Dict[str, str]):
 
     # 2. EJECUCIÓN FASE 3: Estimación espectral de tono (DSP - Siguiente Fase)
     print(locales["STATUS_DSP_START"])
+    f0_array = None
     try:
         from punkito_tabs_oracle.dsp.pitch import PitchTracker
+        tracker = PitchTracker(sr=22050, frame_length=2048, hop_length=512)
+        f0_array = tracker.estimar_f0(ruta_bajo_aislado)
+        print(f"[+] Estimated {len(f0_array)} f0 frames from isolated bass stem.")
     except ImportError:
-        print("[-] Warning: dsp/pitch.py is currently empty (stub mode). Skipping DSP layer.")
+        print("[-] Warning: dsp/pitch.py is missing. Skipping DSP layer.")
+    except Exception as e:
+        print(f"[-] Error during pitch estimation: {e}", file=sys.stderr)
 
     # 3. EJECUCIÓN FASE 4: Mapeo y ruteo topológico de trastes (Router)
     print(locales["STATUS_TAB_GEN"])
     try:
         from punkito_tabs_oracle.tab.router import FretboardRouter
+        router = FretboardRouter()
+        if f0_array is not None:
+            states, tab = router.route_from_f0(f0_array)
+            print("\n[ASCII TAB OUTPUT]\n")
+            print(tab)
+        else:
+            print("[-] No f0 data available; skipping tab generation.")
     except ImportError:
-        print("[-] Warning: tab/router.py is currently empty (stub mode). Skipping Router layer.")
+        print("[-] Warning: tab/router.py is missing. Skipping Router layer.")
+    except Exception as e:
+        print(f"[-] Error during routing: {e}", file=sys.stderr)
 
     print(locales["SUCCESS_PIPELINE"])
 
