@@ -1,21 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-Detector de tono (Pitch Tracker) usando librosa.pyin.
+Detector de tono (Pitch Tracker) usando librosa.pyin con fallback YIN.
 - Registro objetivo: 30-400 Hz (según especificación)
 - Ventana: frame_length=2048, hop_length=512, sr=22050
 - Umbral de silencio por RMS normalizado: 0.05 -> forzar f0=0.0
+- Fallback YIN si confianza pYIN < 5%
+- Beat tracking y cuantización temporal para legibilidad musical
 
 Comentarios en español.
 """
+import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import librosa
 
 
 class PitchTracker:
-    """Estimador de f0 mediante pYIN con supresión por RMS.
+    """Estimador de f0 mediante pYIN con fallback YIN y beat quantization.
 
     Parámetros opcionales para facilitar pruebas y reutilización.
     """
@@ -32,6 +35,7 @@ class PitchTracker:
 
         - Retorna un array numpy 1D con f0 por frame.
         - Un valor de 0.0 indica silencio / no-voz.
+        - Implementa fallback YIN si confianza pYIN < 5%.
         """
         # Cargar audio (mono)
         y, sr = librosa.load(str(audio_path), sr=self.sr, mono=True)
@@ -51,6 +55,33 @@ class PitchTracker:
         f0 = np.asarray(f0, dtype=float)
         f0[np.isnan(f0)] = 0.0
 
+        # Verificar proporción de frames voiceados
+        num_voiced = np.sum(f0 > 0)
+        total_frames = len(f0)
+        voiced_ratio = num_voiced / total_frames if total_frames > 0 else 0.0
+
+        # Fallback YIN si menos del 5% de confianza
+        if voiced_ratio < 0.05:
+            print(
+                f"[WARN] pYIN confidence low ({voiced_ratio:.2%}). Falling back to YIN algorithm.",
+                file=sys.stderr
+            )
+            try:
+                f0_yin = librosa.yin(
+                    y,
+                    fmin=self.fmin,
+                    fmax=self.fmax,
+                    sr=self.sr,
+                    frame_length=self.frame_length,
+                    hop_length=self.hop_length,
+                )
+                f0_yin = np.asarray(f0_yin, dtype=float)
+                f0_yin[np.isnan(f0_yin)] = 0.0
+                f0 = f0_yin
+                print("[INFO] YIN fallback completed successfully.", file=sys.stderr)
+            except Exception as e:
+                print(f"[WARN] YIN fallback failed: {e}. Using pYIN results.", file=sys.stderr)
+
         # Calcular RMS por frame con mismo frame/hop
         rms = librosa.feature.rms(y=y, frame_length=self.frame_length, hop_length=self.hop_length)[0]
         # Normalizar RMS al máximo (siempre proteger contra división por cero)
@@ -68,3 +99,36 @@ class PitchTracker:
             f0[:n_frames][mask_silence] = 0.0
 
         return f0
+
+    def obtener_f0_por_pulso(self, ruta_bajo: Path) -> Tuple[np.ndarray, float]:
+        """Estima f0, detecta tempo, y cuantiza por pulsos/beats.
+
+        Retorna:
+        - f0_pulsos: array con mediana de f0 por beat (0.0 para silencio/rest)
+        - bpm: tempo detectado en pulsos por minuto
+        """
+        # 1. Estimar f0 crudo
+        y, sr = librosa.load(str(ruta_bajo), sr=self.sr, mono=True)
+        f0_raw = self.estimar_f0(ruta_bajo)
+
+        # 2. Detectar tempo y frames de beat
+        _, beat_frames = librosa.beat.beat_track(y=y, sr=self.sr)
+        bpm = librosa.beat.tempo(y=y, sr=self.sr)[0] if len(librosa.beat.tempo(y=y, sr=self.sr)) > 0 else 120.0
+
+        # 3. Cuantizar f0 por intervalos de beat
+        f0_pulsos = []
+        beat_frames = np.concatenate([[0], beat_frames])  # Asegurar inicio
+        for i in range(len(beat_frames) - 1):
+            start_frame = int(beat_frames[i])
+            end_frame = int(beat_frames[i + 1])
+            # Extraer frames de f0 en este intervalo de beat
+            f0_interval = f0_raw[start_frame:end_frame]
+            # Contar voiceados
+            voiced = f0_interval[f0_interval > 0]
+            # Si > 50% son voiced, usar mediana; si no, rest (0.0)
+            if len(voiced) > len(f0_interval) * 0.5:
+                f0_pulsos.append(float(np.median(voiced)))
+            else:
+                f0_pulsos.append(0.0)
+
+        return np.array(f0_pulsos, dtype=float), float(bpm)

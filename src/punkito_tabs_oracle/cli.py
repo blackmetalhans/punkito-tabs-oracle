@@ -81,14 +81,16 @@ def ejecutar_pipeline(audio_path: Path, locales: Dict[str, str]):
         print(f"[-] Error crítico durante el aislamiento de la pista: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # 2. EJECUCIÓN FASE 3: Estimación espectral de tono (DSP - Siguiente Fase)
+    # 2. EJECUCIÓN FASE 3: Estimación espectral de tono con beat quantization (DSP)
     print(locales["STATUS_DSP_START"])
-    f0_array = None
+    f0_pulsos = None
+    bpm = None
     try:
         from punkito_tabs_oracle.dsp.pitch import PitchTracker
         tracker = PitchTracker(sr=22050, frame_length=2048, hop_length=512)
-        f0_array = tracker.estimar_f0(ruta_bajo_aislado)
-        print(f"[+] Estimated {len(f0_array)} f0 frames from isolated bass stem.")
+        f0_pulsos, bpm = tracker.obtener_f0_por_pulso(ruta_bajo_aislado)
+        print(f"[+] Detected tempo: {bpm:.1f} BPM")
+        print(f"[+] Estimated {len(f0_pulsos)} beat-quantized f0 pulses from isolated bass stem.")
     except ImportError:
         print("[-] Warning: dsp/pitch.py is missing. Skipping DSP layer.")
     except Exception as e:
@@ -99,8 +101,8 @@ def ejecutar_pipeline(audio_path: Path, locales: Dict[str, str]):
     try:
         from punkito_tabs_oracle.tab.router import FretboardRouter
         router = FretboardRouter()
-        if f0_array is not None:
-            states, tab = router.route_from_f0(f0_array)
+        if f0_pulsos is not None:
+            states, tab = router.route_from_f0(list(f0_pulsos))
             print("\n[ASCII TAB OUTPUT]\n")
             print(tab)
         else:

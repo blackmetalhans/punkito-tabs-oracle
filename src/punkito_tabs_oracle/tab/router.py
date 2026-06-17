@@ -145,46 +145,41 @@ class FretboardRouter:
         return self.route_from_midi(midi_seq)
 
     def _render_tab(self, states: List[State]) -> str:
-        """Crea una representación ASCII clásica de 4 líneas.
+        """Crea una representación ASCII clásica de 4 líneas con barras de compás cada 4 beats.
 
-        - Colapsa secuencias idénticas en una sola columna por grupo para limpieza.
+        - Cada carácter representa un pulso/beat (cuantizado).
+        - Inserta barras '|' cada 4 beats para agrupar en compases 4/4.
         """
-        # Agrupar tramos consecutivos idénticos
-        groups = []  # list of (state, length)
         if not states:
             return ""
-        prev = states[0]
-        count = 1
-        for s in states[1:]:
-            if s == prev:
-                count += 1
-            else:
-                groups.append((prev, count))
-                prev = s
-                count = 1
-        groups.append((prev, count))
 
         # Anchura de celda según dígitos de traste
-        max_fret = max((g[0].fret for g in groups if g[0].fret >= 0), default=0)
-        cell_w = max(2, len(str(max_fret)))
+        max_fret = max((s.fret for s in states if s.fret >= 0), default=0)
+        cell_w = max(1, len(str(max_fret)))
 
         # Construir líneas, orden G, D, A, E (1..4)
         lines = {1: [], 2: [], 3: [], 4: []}
-        sep = "-" * cell_w
-        for (state, length) in groups:
-            # Por simplicidad, representar cada grupo con una columna que contiene el número de traste (si existe)
+
+        for beat_idx, state in enumerate(states):
+            # Cada beat_idx=0,1,2,3 forma un compás; cada beat_idx%4==0 = nueva barra
+            if beat_idx > 0 and beat_idx % 4 == 0:
+                # Insertar barra de compás
+                for s_idx in range(1, 5):
+                    lines[s_idx].append("|")
+
+            # Renderizar la nota de este beat en cada cuerda
             for s_idx in range(1, 5):
                 if state.string == s_idx:
                     if state.fret >= 0:
+                        # Número de traste, centrado en la celda
                         cell = str(state.fret).rjust(cell_w, " ")
                     else:
-                        cell = " " * cell_w
+                        # Descanso en cuerda al aire (oculto)
+                        cell = "-" * cell_w
                 else:
-                    cell = sep
+                    # Silencio en esta cuerda
+                    cell = "-" * cell_w
                 lines[s_idx].append(cell)
-            # Añadir un separador corto entre grupos para legibilidad
-            for s_idx in range(1, 5):
-                lines[s_idx].append(sep)
 
         # Combinar en texto con nombres de cuerda al inicio
         text_lines = []
