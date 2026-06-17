@@ -111,24 +111,46 @@ class PitchTracker:
         y, sr = librosa.load(str(ruta_bajo), sr=self.sr, mono=True)
         f0_raw = self.estimar_f0(ruta_bajo)
 
-        # 2. Detectar tempo y frames de beat
-        _, beat_frames = librosa.beat.beat_track(y=y, sr=self.sr)
-        bpm = librosa.beat.tempo(y=y, sr=self.sr)[0] if len(librosa.beat.tempo(y=y, sr=self.sr)) > 0 else 120.0
+        if len(f0_raw) == 0:
+            return np.array([], dtype=float), 120.0
 
-        # 3. Cuantizar f0 por intervalos de beat
+        # 2. Detectar tempo
+        tempo = librosa.beat.tempo(y=y, sr=self.sr)
+        bpm = float(tempo[0]) if len(tempo) > 0 else 120.0
+
+        # 3. Detectar beats o usar fallback
+        try:
+            _, beat_frames = librosa.beat.beat_track(y=y, sr=self.sr)
+            if len(beat_frames) == 0:
+                raise ValueError("No beats detected")
+            beat_frames = np.concatenate([[0], beat_frames])
+        except Exception:
+            # Fallback: segmentar en N beats según BPM estimado
+            # Aproximadamente 22050 frames por segundo / 512 hop_length = ~43 frames/segundo
+            # A 120 BPM, 1 beat = 0.5 segundos = ~21.5 frames
+            frames_per_beat = int((self.sr / self.hop_length) * (60.0 / bpm))
+            frames_per_beat = max(1, frames_per_beat)  # Al menos 1 frame por beat
+            beat_frames = np.arange(0, len(f0_raw), frames_per_beat)
+            if beat_frames[-1] < len(f0_raw) - 1:
+                beat_frames = np.concatenate([beat_frames, [len(f0_raw)]])
+
+        # 4. Cuantizar f0 por intervalos de beat
         f0_pulsos = []
-        beat_frames = np.concatenate([[0], beat_frames])  # Asegurar inicio
         for i in range(len(beat_frames) - 1):
             start_frame = int(beat_frames[i])
             end_frame = int(beat_frames[i + 1])
+            # Asegurar límites válidos
+            start_frame = max(0, min(start_frame, len(f0_raw) - 1))
+            end_frame = max(start_frame + 1, min(end_frame, len(f0_raw)))
+
             # Extraer frames de f0 en este intervalo de beat
             f0_interval = f0_raw[start_frame:end_frame]
             # Contar voiceados
             voiced = f0_interval[f0_interval > 0]
             # Si > 50% son voiced, usar mediana; si no, rest (0.0)
-            if len(voiced) > len(f0_interval) * 0.5:
+            if len(voiced) > 0 and len(voiced) > len(f0_interval) * 0.5:
                 f0_pulsos.append(float(np.median(voiced)))
             else:
                 f0_pulsos.append(0.0)
 
-        return np.array(f0_pulsos, dtype=float), float(bpm)
+        return np.array(f0_pulsos, dtype=float), bpm
