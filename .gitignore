@@ -40,7 +40,5 @@ stems_output/
 .vscode/
 .idea/
 .DS_Store
-# Pesos y modelos preentrenados\ npretrained_models/
-
-# Pesos y modelos preentrenados\ npretrained_models/
+# Pesos y modelos preentrenados
 pretrained_models/
