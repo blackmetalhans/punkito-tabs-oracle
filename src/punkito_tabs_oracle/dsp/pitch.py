@@ -198,38 +198,90 @@ class PitchTracker:
         - Retorna un array numpy 1D con f0 por frame.
         - Un valor de 0.0 indica silencio / no-voz.
         - Para frames de baja confianza/no voiceados usa interpolación cúbica.
+
+        Implementa progreso iterativo y procesamiento por chunks para ahorrar RAM.
         """
         # Cargar audio (mono)
         y, sr = librosa.load(str(audio_path), sr=self.sr, mono=True)
 
-        # Ejecutar pYIN
-        # librosa.pyin devuelve un array con NaNs donde no hay estimación
-        f0, voiced_flag, voiced_prob = librosa.pyin(
-            y,
-            fmin=self.fmin,
-            fmax=self.fmax,
-            sr=self.sr,
-            frame_length=self.frame_length,
-            hop_length=self.hop_length,
-        )
+        # Parámetros de chunking: procesar en bloques de N segundos con overlap para evitar artefactos
+        seconds_per_chunk = 10.0
+        chunk_size = int(seconds_per_chunk * self.sr)
+        hop_frames = self.hop_length
+        frame_per_chunk = max(1, int(np.ceil((chunk_size - self.frame_length) / hop_frames)))
 
-        # Garantizar vector numpy y reemplazar NaN por 0.0 (no-voz)
-        f0 = np.asarray(f0, dtype=float)
-        voiced_prob = np.asarray(voiced_prob, dtype=float)
+        # Preparar contenedores para concatenar resultados
+        f0_list = []
+        voiced_prob_list = []
+
+        # Progreso: usar tqdm si está disponible, sino fallback a prints
+        try:
+            from tqdm import tqdm
+            progress = tqdm(range(0, len(y), chunk_size), desc="Estimando f0", unit="chunk")
+        except Exception:
+            progress = list(range(0, len(y), chunk_size))
+
+        for start in progress:
+            end = min(start + chunk_size, len(y))
+            y_chunk = y[start:end]
+
+            # Si el chunk es muy pequeño, pad para evitar errores en pyin
+            if len(y_chunk) < self.frame_length:
+                pad_width = self.frame_length - len(y_chunk)
+                y_chunk = np.pad(y_chunk, (0, pad_width))
+
+            # Ejecutar pYIN en el chunk
+            try:
+                f0_chunk, _, voiced_prob_chunk = librosa.pyin(
+                    y_chunk,
+                    fmin=self.fmin,
+                    fmax=self.fmax,
+                    sr=self.sr,
+                    frame_length=self.frame_length,
+                    hop_length=self.hop_length,
+                )
+            except Exception as e:
+                # Si pyin falla en este chunk, registrar y seguir
+                if hasattr(progress, "write"):
+                    progress.write(f"pyin failed on chunk {start}-{end}: {e}")
+                else:
+                    print(f"pyin failed on chunk {start}-{end}: {e}")
+                # Rellenar con NaNs para mantener alineación
+                n_frames_chunk = int(np.ceil((len(y_chunk) - self.frame_length) / float(self.hop_length))) + 1
+                f0_chunk = np.full(n_frames_chunk, np.nan)
+                voiced_prob_chunk = np.zeros(n_frames_chunk)
+
+            # Convertir a numpy
+            f0_chunk = np.asarray(f0_chunk, dtype=float)
+            voiced_prob_chunk = np.asarray(voiced_prob_chunk, dtype=float)
+
+            # Si no estamos al primer chunk, recortar frames solapados para evitar duplicados
+            if f0_list:
+                # Determinar cuantos frames solapan: calcular en frames la parte que se repite por el overlap implícito
+                overlap_frames = int(np.floor(self.frame_length / float(self.hop_length)))
+                if overlap_frames > 0:
+                    f0_chunk = f0_chunk[overlap_frames:]
+                    voiced_prob_chunk = voiced_prob_chunk[overlap_frames:]
+
+            f0_list.append(f0_chunk)
+            voiced_prob_list.append(voiced_prob_chunk)
+
+        # Concatenar todos los chunks
+        if len(f0_list) == 0:
+            return np.array([])
+
+        f0 = np.concatenate([arr for arr in f0_list])
+        voiced_prob = np.concatenate([arr for arr in voiced_prob_list])
+
+        # Alinear longitudes con RMS
+        rms = librosa.feature.rms(y=y, frame_length=self.frame_length, hop_length=self.hop_length)[0]
+        max_rms = float(np.max(rms)) if rms.size > 0 else 0.0
+        rms_norm = rms / max_rms if max_rms > 0 else rms
+
+        # Valid mask y postprocesado
         valid_mask = (~np.isnan(f0)) & (f0 > 0.0) & (voiced_prob >= self.voiced_confidence_threshold)
         f0 = self._interpolate_low_confidence(f0=f0, valid_mask=valid_mask)
 
-        # Calcular RMS por frame con mismo frame/hop
-        rms = librosa.feature.rms(y=y, frame_length=self.frame_length, hop_length=self.hop_length)[0]
-        # Normalizar RMS al máximo (siempre proteger contra división por cero)
-        max_rms = float(np.max(rms)) if rms.size > 0 else 0.0
-        if max_rms > 0:
-            rms_norm = rms / max_rms
-        else:
-            rms_norm = rms
-
-        # Si RMS normalizado por frame cae por debajo del umbral, forzar f0=0.0
-        # Alinear longitudes: librosa.pyin puede devolver más o menos frames, pero usando mismos frame/hop deben coincidir
         n_frames = min(len(f0), len(rms_norm))
         if n_frames > 0:
             mask_silence = rms_norm[:n_frames] < self.rms_silence_threshold
