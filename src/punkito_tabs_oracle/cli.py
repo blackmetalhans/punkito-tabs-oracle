@@ -5,7 +5,6 @@ Módulo central encargado de la interfaz de línea de comandos, validación del 
 operativo (ffmpeg), carga dinámica de configuraciones de idioma (i18n) y control del pipeline.
 """
 
-import os
 import sys
 import argparse
 import json
@@ -99,15 +98,29 @@ def ejecutar_pipeline(audio_path: Path, locales: Dict[str, str]):
     # 3. EJECUCIÓN FASE 4: Mapeo y ruteo topológico de trastes (Router)
     print(locales["STATUS_TAB_GEN"])
     try:
-        from punkito_tabs_oracle.tab.router import FretboardRouter
+        from punkito_tabs_oracle.tab import router
         from punkito_tabs_oracle.tab.exporter import MusicXMLExporter
-        router = FretboardRouter()
+
+        router_available = True
+    except ImportError:
+        router_available = False
+
+    if not router_available:
+        print("[-] Warning: Router module is unavailable. Skipping Router layer.")
+        print(locales["SUCCESS_PIPELINE"])
+        return
+
+    try:
+        router_instance = router.FretboardRouter()
         if f0_pulsos is not None:
-            midi_seq = router.f0_to_midi_sequence(list(f0_pulsos))
-            states, tab = router.route_from_f0(list(f0_pulsos))
+            midi_seq = router_instance.f0_to_midi_sequence(list(f0_pulsos))
+            states, tab = router_instance.route_from_f0(list(f0_pulsos))
             print("\n[ASCII TAB OUTPUT]\n")
             print(tab)
-            musicxml_route = router.build_musicxml_route(midi_sequence=midi_seq, states=states)
+            musicxml_route = router_instance.build_musicxml_route(
+                midi_sequence=midi_seq,
+                states=states,
+            )
             musicxml_path = ruta_bajo_aislado.parent / "bass_tab.musicxml"
             exported_path = MusicXMLExporter(
                 musicxml_route,
@@ -116,8 +129,6 @@ def ejecutar_pipeline(audio_path: Path, locales: Dict[str, str]):
             print(f"[+] MusicXML tab exported at: {exported_path}")
         else:
             print("[-] No f0 data available; skipping tab generation.")
-    except ImportError:
-        print("[-] Warning: tab/router.py is missing. Skipping Router layer.")
     except Exception as e:
         print(f"[-] Error during routing: {e}", file=sys.stderr)
 

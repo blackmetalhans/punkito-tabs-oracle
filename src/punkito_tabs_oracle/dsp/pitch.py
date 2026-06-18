@@ -13,6 +13,12 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
+import scipy.signal
+
+# Compatibilidad con SciPy>=1.9 para dependencias legacy en librosa.
+if not hasattr(scipy.signal, "hann"):
+    scipy.signal.hann = scipy.signal.windows.hann
+
 import librosa
 from scipy.interpolate import interp1d
 
