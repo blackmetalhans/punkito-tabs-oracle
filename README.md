@@ -2,6 +2,8 @@
 
 **Language / Idioma:** 🇺🇸 English | [🇪🇸 Leer en Español](./README.es.md)
 
+**MVP Status (Jun 2026):** pYIN-based F0 extraction + beat-aware elastic quantization; articulation detection (dead, legato, slides); scale-aware Viterbi router with octave & 4-fret box ergonomics; MusicXML export with slurs and 'x' noteheads. See `src/punkito_tabs_oracle/dsp/pitch.py`, `src/punkito_tabs_oracle/tab/router.py`, and `src/punkito_tabs_oracle/tab/exporter.py` for implementation details.
+
 > **AI-powered bass isolation and tablature transcription system** — Convert polyphonic audio into playable bass guitar tabs with advanced articulation detection.
 
 ✅ **Project Status:** Milestone 1 (Advanced Articulations) — ML, DSP, routing, MusicXML export, ghost notes, and legato detection integrated.

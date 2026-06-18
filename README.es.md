@@ -1,3 +1,6 @@
+
+**MVP (Jun 2026):** Extracción pYIN + cuantización elástica por beat; detección de articulaciones (dead, legato, slides); ruteador Viterbi consciente de escala con reglas de octava y box de 4 trastes; exportación MusicXML con slurs y cabezas de nota 'x' para dead notes. Implementación: `src/punkito_tabs_oracle/dsp/pitch.py`, `src/punkito_tabs_oracle/tab/router.py`, `src/punkito_tabs_oracle/tab/exporter.py`.
+
 **Language / Idioma:** [🇺🇸 English](./README.md) | 🇪🇸 Español
 
 > **Sistema de aislamiento de bajo y transcripción de tablaturas impulsado por IA** — Convierte audio polifónico en tablaturas ejecutables para bajo.
