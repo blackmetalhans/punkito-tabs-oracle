@@ -1,6 +1,6 @@
 # Punkito Tabs Oracle: Current Architecture (June 2026)
 
-This document reflects the **current functional state** of the repository.
+This document reflects the **current functional state** of the repository. Project Status: ✅ Functional MVP — ML, DSP, routing, and MusicXML export integrated and passing tests.
 
 The current architecture separates concerns across ML, DSP, routing, and export so each stage can be tuned independently while preserving deterministic end-to-end behavior.
 

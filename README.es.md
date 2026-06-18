@@ -2,7 +2,7 @@
 
 > **Sistema de aislamiento de bajo y transcripción de tablaturas impulsado por IA** — Convierte audio polifónico en tablaturas ejecutables para bajo.
 
-⚠️ **Estado del Proyecto:** Fase de Integración Alfa (ML, DSP y Ruteo por Programación Dinámica implementados y pasando pruebas).
+✅ **Estado del Proyecto:** MVP funcional — ML, DSP, ruteo y exportación MusicXML integrados y pasando pruebas.
 
 Punkito Tabs Oracle está diseñado como un flujo determinista de audio a tablatura: cada etapa tiene una responsabilidad clara y cada salida se puede inspeccionar por separado. Esto facilita tanto la evolución del DSP como la integración con herramientas de notación.
 

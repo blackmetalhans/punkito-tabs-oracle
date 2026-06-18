@@ -4,7 +4,7 @@
 
 > **AI-powered bass isolation and tablature transcription system** — Convert polyphonic audio into playable bass guitar tabs.
 
-⚠️ **Project Status:** Alpha Integration Phase (ML, DSP, and Dynamic Programming Routing fully implemented and passing tests).
+✅ **Project Status:** Functional MVP — ML, DSP, routing, and MusicXML export integrated and passing tests.
 
 Punkito Tabs Oracle is designed as a deterministic audio-to-tab workflow: each stage has a specific responsibility, and each output can be inspected independently. This makes the system practical both for iterative DSP development and for downstream notation workflows that need reproducible physical fingering.
 
