@@ -237,10 +237,92 @@ class PitchTracker:
 
         return f0
 
+    def _extract_beat_windows(
+        self, y: np.ndarray, beat_frames: np.ndarray, f0_raw: np.ndarray
+    ) -> List[Tuple[int, int]]:
+        """Extrae ventanas de beat normalizadas para cuantización elástica.
+
+        Calcula los límites (start_frame, end_frame) para cada beat basándose
+        en los timestamps de beat detectados por librosa.beat.beat_track().
+
+        Args:
+            y: Signal de audio
+            beat_frames: Array de frame indices de beats detectados
+            f0_raw: Array de f0 estimado
+
+        Returns:
+            Lista de tuplas (start_frame, end_frame) para cada beat window
+        """
+        beat_windows: List[Tuple[int, int]] = []
+
+        if len(beat_frames) == 0:
+            # Fallback: crear ventanas uniformes
+            frames_per_beat = max(1, int(len(f0_raw) / 4))  # Asumir ~4 beats
+            for i in range(0, len(f0_raw), frames_per_beat):
+                start = i
+                end = min(i + frames_per_beat, len(f0_raw))
+                beat_windows.append((start, end))
+            return beat_windows
+
+        # Usar beat frames detectados
+        beat_frames = np.unique(np.sort(beat_frames))
+        beat_frames = np.concatenate([[0], beat_frames, [len(f0_raw)]])
+        beat_frames = np.unique(beat_frames)
+
+        for i in range(len(beat_frames) - 1):
+            start_frame = int(beat_frames[i])
+            end_frame = int(beat_frames[i + 1])
+            start_frame = max(0, min(start_frame, len(f0_raw) - 1))
+            end_frame = max(start_frame + 1, min(end_frame, len(f0_raw)))
+            beat_windows.append((start_frame, end_frame))
+
+        return beat_windows
+
+    def _quantize_f0_in_beat_window(
+        self, f0_interval: np.ndarray, ghost_notes: np.ndarray,
+        legato_mask: np.ndarray, start_frame: int, end_frame: int
+    ) -> Tuple[float, str]:
+        """Cuantiza f0 dentro de una ventana local de beat.
+
+        Calcula la mediana de f0 voiced y determina el tipo de articulación
+        basándose en propiedades locales dentro de la ventana.
+
+        Args:
+            f0_interval: Segmento de f0 para esta ventana
+            ghost_notes: Array booleano de detección de ghost notes
+            legato_mask: Array booleano de detección de legato
+            start_frame: Índice de frame inicial
+            end_frame: Índice de frame final
+
+        Returns:
+            Tupla (f0_value, articulation_type)
+        """
+        voiced = f0_interval[f0_interval > 0.0]
+
+        articulation_type = "normal"
+        f0_value = 0.0
+
+        if len(voiced) > 0 and len(voiced) > len(f0_interval) * 0.5:
+            f0_value = float(np.median(voiced))
+
+            # Verificar si es ghost note
+            ghost_count = np.sum(ghost_notes[start_frame:end_frame])
+            if ghost_count > 0:
+                articulation_type = "dead"
+            # Verificar si hay legato en el intervalo
+            elif np.sum(legato_mask[start_frame:end_frame]) > 0:
+                articulation_type = "legato"
+
+        return f0_value, articulation_type
+
     def obtener_f0_por_pulso(
         self, ruta_bajo: Path
     ) -> Tuple[List[Tuple[float, str]], float]:
         """Estima f0, detecta tempo, y cuantiza por pulsos/beats con articulation.
+
+        Implementa cuantización elástica usando beat timestamps no-lineales
+        extraídos con librosa.beat.beat_track() para soportar variaciones de groove
+        humanas.
 
         Retorna:
         - f0_pulsos: lista de tuplas (f0_valor, articulation_type) donde:
@@ -259,16 +341,10 @@ class PitchTracker:
         tempo = librosa.beat.tempo(y=y, sr=self.sr)
         bpm = float(tempo[0]) if len(tempo) > 0 else 120.0
 
-        # 3. Detectar beats o usar fallback
+        # 3. PHASE 1: Detectar beats usando librosa.beat.beat_track()
+        # para extraer timestamps de beat no-lineales
         _, beat_frames = librosa.beat.beat_track(y=y, sr=self.sr)
-        if len(beat_frames) == 0:
-            frames_per_beat = int((self.sr / self.hop_length) * (60.0 / bpm))
-            frames_per_beat = max(1, frames_per_beat)
-            beat_frames = np.arange(0, len(f0_raw), frames_per_beat)
-            if beat_frames[-1] < len(f0_raw):
-                beat_frames = np.concatenate([beat_frames, [len(f0_raw)]])
-        else:
-            beat_frames = np.unique(np.concatenate([[0], beat_frames, [len(f0_raw)]]))
+        beat_windows = self._extract_beat_windows(y, beat_frames, f0_raw)
 
         # 4. Detectar ghost notes y legato
         _, _, voiced_prob = librosa.pyin(
@@ -288,34 +364,19 @@ class PitchTracker:
             backtrack=True,
         )
 
-        ghost_notes = self._detect_ghost_notes(y, f0_raw, voiced_prob, beat_frames)
+        beat_frame_starts = np.array([w[0] for w in beat_windows])
+        ghost_notes = self._detect_ghost_notes(
+            y, f0_raw, voiced_prob, beat_frame_starts
+        )
         legato_mask = self._detect_legato(f0_raw, voiced_prob, onsets)
 
-        # 5. Cuantizar f0 por intervalos de beat con articulation
+        # 5. Cuantizar f0 por ventanas de beat elásticas con articulation
         f0_pulsos: List[Tuple[float, str]] = []
-        for i in range(len(beat_frames) - 1):
-            start_frame = int(beat_frames[i])
-            end_frame = int(beat_frames[i + 1])
-            start_frame = max(0, min(start_frame, len(f0_raw) - 1))
-            end_frame = max(start_frame + 1, min(end_frame, len(f0_raw)))
-
+        for start_frame, end_frame in beat_windows:
             f0_interval = f0_raw[start_frame:end_frame]
-            voiced = f0_interval[f0_interval > 0]
-
-            articulation_type = "normal"
-            f0_value = 0.0
-
-            if len(voiced) > 0 and len(voiced) > len(f0_interval) * 0.5:
-                f0_value = float(np.median(voiced))
-
-                # Verificar si es ghost note
-                ghost_count = np.sum(ghost_notes[start_frame:end_frame])
-                if ghost_count > 0:
-                    articulation_type = "dead"
-                # Verificar si hay legato en el intervalo
-                elif np.sum(legato_mask[start_frame:end_frame]) > 0:
-                    articulation_type = "legato"
-
+            f0_value, articulation_type = self._quantize_f0_in_beat_window(
+                f0_interval, ghost_notes, legato_mask, start_frame, end_frame
+            )
             f0_pulsos.append((f0_value, articulation_type))
 
         return f0_pulsos, bpm
