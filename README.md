@@ -4,7 +4,7 @@
 
 > **AI-powered bass isolation and tablature transcription system** — Convert polyphonic audio into playable bass guitar tabs.
 
-⚠️ **Project Status:** Active Development (Core Pipeline Implemented)
+⚠️ **Project Status:** Alpha Integration Phase (ML, DSP, and Dynamic Programming Routing fully implemented and passing tests).
 
 ## 🎯 What This Project Does
 
@@ -97,10 +97,10 @@ pip install -e .[dev]
 - [ ] Add batch mode and GUI.
 
 ## 📊 Testing
-
-Run tests:
+To avoid import errors, do not mutate PYTHONPATH. Ensure the package is installed in editable mode first:
 
 ```bash
+pip install -e .[dev]
 pytest -v
 ```
 
