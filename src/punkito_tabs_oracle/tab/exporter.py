@@ -103,23 +103,31 @@ class MusicXMLExporter:
         return int(total - (internal_string_index - 1))
 
     def _build_staff_details(self) -> ET.Element:
-        """Build a MusicXML staff-details block for the configured tuning.
+        """Build a MusicXML staff-details block for 5-string bass tuning.
 
-        The settings.tuning_midi is ordered low-to-high. MusicXML expects staff-tuning
-        lines numbered top-to-bottom where line="1" is the highest string. Compute
-        the line attribute using the physical mapping described above.
+        Enforces explicit 5-string bass tuning:
+        - line 1 (highest): G2 (43 MIDI)
+        - line 2: D2 (38 MIDI)
+        - line 3: A1 (33 MIDI)
+        - line 4: E1 (28 MIDI)
+        - line 5 (lowest): B0 (23 MIDI)
         """
         staff_details = ET.Element("staff-details")
-        ET.SubElement(staff_details, "staff-lines").text = str(len(self.tuning_midi))
+        ET.SubElement(staff_details, "staff-lines").text = "5"
 
-        total = len(self.tuning_midi)
-        # tuning_midi is low->high; assign each entry its physical (top-down) line number
-        for idx, midi_pitch in enumerate(self.tuning_midi):
-            physical_line = total - idx
-            tuning = ET.SubElement(staff_details, "staff-tuning", line=str(physical_line))
-            p = pitch.Pitch(midi=int(midi_pitch))
-            ET.SubElement(tuning, "tuning-step").text = p.step
-            ET.SubElement(tuning, "tuning-octave").text = str(p.octave)
+        # Explicit mapping: line -> MIDI pitch
+        explicit_tuning = [
+            (1, 43, "G", 2),   # line 1: G2
+            (2, 38, "D", 2),   # line 2: D2
+            (3, 33, "A", 1),   # line 3: A1
+            (4, 28, "E", 1),   # line 4: E1
+            (5, 23, "B", 0),   # line 5: B0
+        ]
+
+        for line_num, midi_pitch, step, octave in explicit_tuning:
+            tuning = ET.SubElement(staff_details, "staff-tuning", line=str(line_num))
+            ET.SubElement(tuning, "tuning-step").text = step
+            ET.SubElement(tuning, "tuning-octave").text = str(octave)
 
         return staff_details
 

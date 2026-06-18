@@ -300,20 +300,46 @@ class FretboardRouter:
 
         Para dead notes, devuelve un estado unvoiced (None, -1) con articulation='dead'
         para evitar colapso de trellis durante el traceback de Viterbi.
+        
+        Implementa ruteo determinista que:
+        - Calcula (string, fret) para cada cuerda posible
+        - Prioriza trastes bajos (0-7) para mayor estabilidad técnica
+        - Valida integridad matemática: midi_base_cuerda + traste == midi_detectado
         """
         if midi is None or articulation_type == "dead":
             # Devolver estado fallback: unvoiced con la articulation especificada
             return [State(None, -1, articulation_type)]
 
         candidates: List[State] = []
+        
         for s in range(1, self.strings + 1):
             fret = midi - self.tuning[s]
+            
+            # Validación de integridad: el MIDI calculado debe coincidir exactamente con el detectado
+            midi_calculated = self.tuning[s] + fret
+            if midi_calculated != midi:
+                raise ValueError(
+                    f"MIDI integrity assertion failed for string {s}: "
+                    f"detected MIDI={midi}, base_cuerda={self.tuning[s]}, "
+                    f"fret={fret}, calculated MIDI={midi_calculated}. "
+                    f"These values must be mathematically identical."
+                )
+            
+            # Validar que el traste esté en rango
             if 0 <= fret <= self.max_fret:
                 candidates.append(State(s, int(fret), articulation_type))
+
+        # Priorizar trastes bajos (0-7) para mayor estabilidad
+        low_fret_candidates = [c for c in candidates if c.fret <= 7]
+        if low_fret_candidates:
+            # Ordenar por traste ascendente, luego por cuerda
+            low_fret_candidates.sort(key=lambda c: (c.fret, c.string))
+            candidates = low_fret_candidates
 
         if not candidates:
             # No hay representación física -> fallback rest state
             return [State(None, -1, articulation_type)]
+        
         return candidates
 
     def _transition_cost(

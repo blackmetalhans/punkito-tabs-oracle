@@ -42,3 +42,4 @@ stems_output/
 .DS_Store
 # Pesos y modelos preentrenados
 pretrained_models/
+bass_tab.musicxml

@@ -1,6 +1,6 @@
 [instrument]
-strings = 4
-tuning_midi = [28, 33, 38, 43] # E1, A1, D2, G2
+strings = 5
+tuning_midi = [23, 28, 33, 38, 43] # B0, E1, A1, D2, G2
 max_fret = 24
 
 [router_weights]
