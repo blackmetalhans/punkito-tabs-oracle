@@ -100,11 +100,17 @@ def ejecutar_pipeline(audio_path: Path, locales: Dict[str, str]):
     print(locales["STATUS_TAB_GEN"])
     try:
         from punkito_tabs_oracle.tab.router import FretboardRouter
+        from punkito_tabs_oracle.tab.exporter import MusicXMLExporter
         router = FretboardRouter()
         if f0_pulsos is not None:
+            midi_seq = router.f0_to_midi_sequence(list(f0_pulsos))
             states, tab = router.route_from_f0(list(f0_pulsos))
             print("\n[ASCII TAB OUTPUT]\n")
             print(tab)
+            musicxml_route = router.build_musicxml_route(midi_sequence=midi_seq, states=states)
+            musicxml_path = ruta_bajo_aislado.parent / "bass_tab.musicxml"
+            exported_path = MusicXMLExporter(musicxml_route).write(musicxml_path)
+            print(f"[+] MusicXML tab exported at: {exported_path}")
         else:
             print("[-] No f0 data available; skipping tab generation.")
     except ImportError:

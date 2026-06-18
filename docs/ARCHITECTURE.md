@@ -2,6 +2,8 @@
 
 This document reflects the **current functional state** of the repository.
 
+The current architecture separates concerns across ML, DSP, routing, and export so each stage can be tuned independently while preserving deterministic end-to-end behavior.
+
 ## 1. Implemented System Flow
 
 ```text
@@ -13,6 +15,7 @@ Input Audio File
    -> Beat-quantized f0 sequence
    -> Fretboard routing (dynamic programming)
    -> ASCII tablature output
+   -> MusicXML export with technical string/fret metadata
 ```
 
 ## 2. Repository Layout and Responsibilities
@@ -28,7 +31,9 @@ punkito-tabs-oracle/
 │   ├── cli.py
 │   ├── ml/separator.py
 │   ├── dsp/pitch.py
-│   └── tab/router.py
+│   └── tab/
+│       ├── router.py
+│       └── exporter.py
 └── tests/
     ├── test_dsp.py
     └── test_tab.py
@@ -39,6 +44,9 @@ punkito-tabs-oracle/
 - Loads i18n messages from `config/locales`.
 - Validates input audio and `ffmpeg` availability.
 - Orchestrates ML -> DSP -> TAB sequence.
+- Exports `stems_output/<audio_name>/bass_tab.musicxml` after routing.
+
+The CLI is intentionally thin: it coordinates stage boundaries, surfaces user-facing status/errors, and writes final artifacts without embedding DSP or routing logic.
 
 ### `src/punkito_tabs_oracle/ml/separator.py`
 - `BassSeparator` wraps Spleeter (`spleeter:4stems`).
@@ -55,6 +63,14 @@ punkito-tabs-oracle/
 - `FretboardRouter` converts f0 to MIDI and finds ergonomic `(string, fret)` paths.
 - Uses dynamic programming with transition cost terms loaded from `config/settings.toml`.
 - Supports rests and renders 4-string ASCII tablature with bar separators every 4 beats.
+- Emits grouped route events with `(midi_pitch, string_index, fret_number, duration_in_beats)` for downstream exporters.
+
+### `src/punkito_tabs_oracle/tab/exporter.py`
+- `MusicXMLExporter` builds a `music21` Electric Bass part in Bass Clef.
+- Writes rhythmic notes/rests and preserves physical fingering via MusicXML `<technical>` metadata (`StringIndication` and `FretIndication`).
+- Output is compatible with MuseScore, Guitar Pro, AlphaTab, and Songsterr-style rendering engines.
+
+This guarantees interoperability: downstream notation tools receive both the musical event stream and the exact physical fingering selected by the router.
 
 ## 3. Test Coverage (Current)
 
@@ -76,5 +92,5 @@ punkito-tabs-oracle/
 ## 5. Immediate Next Milestones
 
 1. Add integration tests for complete pipeline execution.
-2. Expand batch mode and higher-level UI around the existing configurable pipeline.
-3. Add batch processing mode and higher-level user interface options.
+2. Add batch processing support over multiple input files.
+3. Add a higher-level user interface (GUI/Web) on top of the current CLI.

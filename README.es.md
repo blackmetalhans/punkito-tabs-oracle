@@ -4,6 +4,8 @@
 
 ⚠️ **Estado del Proyecto:** Fase de Integración Alfa (ML, DSP y Ruteo por Programación Dinámica implementados y pasando pruebas).
 
+Punkito Tabs Oracle está diseñado como un flujo determinista de audio a tablatura: cada etapa tiene una responsabilidad clara y cada salida se puede inspeccionar por separado. Esto facilita tanto la evolución del DSP como la integración con herramientas de notación.
+
 ## 🎯 Qué hace este proyecto
 
 Punkito Tabs Oracle es un pipeline de audio que:
@@ -13,6 +15,7 @@ Punkito Tabs Oracle es un pipeline de audio que:
 3. **Cuantiza tonos por pulso/beat** para mejorar legibilidad musical.
 4. **Mapea notas al diapasón** con ruteo por programación dinámica.
 5. **Genera tablatura ASCII** para bajo de 4 cuerdas.
+6. **Exporta MusicXML** con metadatos físicos de cuerda/traste compatibles con MuseScore, Guitar Pro, AlphaTab y motores tipo Songsterr.
 
 ## 🏗️ Arquitectura Implementada
 
@@ -24,6 +27,7 @@ flowchart TD
     D --> E[f0 cuantizado por pulsos]
     E --> F[Tab: FretboardRouter - optimización por costo]
     F --> G[Salida ASCII tab]
+    F --> H[MusicXMLExporter - exportación partitura+tab con metadata técnica]
 ```
 
 ## 📂 Estructura del Proyecto
@@ -34,7 +38,7 @@ punkito-tabs-oracle/
 │   ├── locales/
 │   │   ├── en.json
 │   │   └── es.json
-│   └── settings.toml          # Reservado (actualmente vacío)
+│   └── settings.toml          # Parámetros runtime DSP/router/instrumento
 ├── docs/
 │   └── ARCHITECTURE.md
 ├── src/
@@ -42,7 +46,9 @@ punkito-tabs-oracle/
 │       ├── cli.py             # CLI que orquesta el pipeline
 │       ├── dsp/pitch.py       # pYIN + interpolación + cuantización por beat
 │       ├── ml/separator.py    # Wrapper de Spleeter para aislar bajo
-│       └── tab/router.py      # Ruteo de trastes + render ASCII
+│       └── tab/
+│           ├── router.py      # Ruteo de trastes + render ASCII
+│           └── exporter.py    # Exportación MusicXML con metadata cuerda/traste
 └── tests/
     ├── test_dsp.py
     └── test_tab.py
@@ -67,6 +73,9 @@ pip install -e .[dev]
 - Valida existencia y extensión del archivo de audio.
 - Valida `ffmpeg` antes de ejecutar.
 - Ejecuta el flujo ML → DSP → TAB.
+- Guarda `stems_output/<audio_name>/bass_tab.musicxml` tras el ruteo.
+
+La CLI ahora entrega dos artefactos complementarios del mismo ruteo: una vista ASCII rápida para inspección y un `.musicxml` estructurado para edición/render en software musical.
 
 ### ✅ Capa ML (`ml/separator.py`)
 - Usa modelo `spleeter:4stems`.
@@ -84,6 +93,15 @@ pip install -e .[dev]
 - Selección ergonómica (cuerda/traste) con programación dinámica.
 - Manejo de silencios.
 - Render de tablatura ASCII de 4 líneas con barras de compás cada 4 pulsos.
+- Genera eventos estructurados (`midi_pitch`, `string_index`, `fret_number`, `duration_in_beats`) para exportación MusicXML.
+
+### ✅ Capa MusicXML (`tab/exporter.py`)
+- Construye una parte de bajo eléctrico (`music21`) con clave de Fa.
+- Inyecta digitación física en nodos `<technical>` con `StringIndication` y `FretIndication`.
+- Conserva silencios y duraciones por beat en el archivo exportado.
+- Compatible con MuseScore, Guitar Pro, AlphaTab y motores tipo Songsterr.
+
+Como la exportación incluye la digitación exacta seleccionada por el algoritmo DP, el software externo puede respetar la ejecución física prevista y no solo la altura de las notas.
 
 ## 🔄 Pendiente / En Progreso
 
@@ -106,6 +124,7 @@ pytest -v
 Cobertura automatizada actual:
 - Comportamiento de estimación DSP y cuantización por beat.
 - Decisiones de ruteo y render de tablatura ASCII.
+- Agrupación de eventos para la exportación MusicXML.
 
 ## 🎓 Documentación
 

@@ -7,7 +7,7 @@ como un problema de camino mínimo (programación dinámica / Viterbi-like).
 Comentarios en español.
 """
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
 import numpy as np
@@ -178,6 +178,65 @@ class FretboardRouter:
             else:
                 midi_seq.append(int(round(librosa.hz_to_midi(float(f)))))
         return self.route_from_midi(midi_seq)
+
+    def f0_to_midi_sequence(self, f0_array: List[float]) -> List[Optional[int]]:
+        """Convierte una secuencia de f0 (Hz) a MIDI entero o None para silencios."""
+        midi_seq: List[Optional[int]] = []
+        for f in f0_array:
+            if f is None or f == 0.0 or np.isnan(f):
+                midi_seq.append(None)
+            else:
+                midi_seq.append(int(round(librosa.hz_to_midi(float(f)))))
+        return midi_seq
+
+    def build_musicxml_route(
+        self,
+        midi_sequence: List[Optional[int]],
+        states: List[State],
+    ) -> List[Dict[str, object]]:
+        """Construye eventos para exportación MusicXML con duración en beats.
+
+        Agrupa beats consecutivos con mismo (midi, cuerda, traste) en un único evento
+        para representar sustain.
+        """
+        if len(midi_sequence) != len(states):
+            raise ValueError("midi_sequence and states must have the same length.")
+        if not states:
+            return []
+
+        events: List[Dict[str, object]] = []
+
+        def append_event(
+            midi_pitch: Optional[int],
+            state: State,
+            duration_in_beats: float,
+        ) -> None:
+            events.append(
+                {
+                    "midi_pitch": None if midi_pitch is None else int(midi_pitch),
+                    "string_index": None if state.string is None else int(state.string),
+                    "fret_number": None if state.string is None else int(state.fret),
+                    "duration_in_beats": float(duration_in_beats),
+                }
+            )
+
+        current_midi = midi_sequence[0]
+        current_state = states[0]
+        current_duration = 1.0
+
+        for idx in range(1, len(states)):
+            midi_pitch = midi_sequence[idx]
+            state = states[idx]
+            if midi_pitch == current_midi and state == current_state:
+                current_duration += 1.0
+                continue
+            append_event(current_midi, current_state, current_duration)
+            current_midi = midi_pitch
+            current_state = state
+            current_duration = 1.0
+
+        append_event(current_midi, current_state, current_duration)
+        return events
 
     def _render_tab(self, states: List[State], midi_sequence: Optional[List[Optional[int]]] = None) -> str:
         """Crea una representación ASCII clásica de 4 líneas con barras de compás cada 4 beats.

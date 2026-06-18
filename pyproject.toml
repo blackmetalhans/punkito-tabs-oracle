@@ -23,6 +23,7 @@ dependencies = [
 "spleeter>=2.4.0,<2.4.1",
 "scipy>=1.8.0",
 "dynaconf>=3.1.0",
+"music21>=9.1.0",
 "tomli>=2.0.1; python_version < '3.11'"
 ]
 

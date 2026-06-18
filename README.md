@@ -6,6 +6,8 @@
 
 ⚠️ **Project Status:** Alpha Integration Phase (ML, DSP, and Dynamic Programming Routing fully implemented and passing tests).
 
+Punkito Tabs Oracle is designed as a deterministic audio-to-tab workflow: each stage has a specific responsibility, and each output can be inspected independently. This makes the system practical both for iterative DSP development and for downstream notation workflows that need reproducible physical fingering.
+
 ## 🎯 What This Project Does
 
 Punkito Tabs Oracle is an audio processing pipeline that:
@@ -15,6 +17,7 @@ Punkito Tabs Oracle is an audio processing pipeline that:
 3. **Quantizes pitches by beat** to improve readability.
 4. **Maps notes to fretboard positions** using dynamic-programming routing.
 5. **Generates ASCII tablature** for 4-string bass.
+6. **Exports MusicXML** with physical string/fret metadata compatible with MuseScore, Guitar Pro, AlphaTab, and Songsterr-like rendering engines.
 
 ## 🏗️ Implemented Architecture
 
@@ -26,6 +29,7 @@ flowchart TD
     D --> E[Beat-quantized f0 pulses]
     E --> F[Tab: FretboardRouter - DP cost optimization]
     F --> G[ASCII tab output]
+    F --> H[MusicXMLExporter - notation+tab export with technical metadata]
 ```
 
 ## 📂 Project Structure
@@ -36,7 +40,7 @@ punkito-tabs-oracle/
 │   ├── locales/
 │   │   ├── en.json
 │   │   └── es.json
-│   └── settings.toml          # Reserved (currently empty)
+│   └── settings.toml          # Runtime DSP/router/instrument parameters
 ├── docs/
 │   └── ARCHITECTURE.md
 ├── src/
@@ -44,7 +48,9 @@ punkito-tabs-oracle/
 │       ├── cli.py             # Pipeline orchestration CLI
 │       ├── dsp/pitch.py       # pYIN + interpolation + beat quantization
 │       ├── ml/separator.py    # Spleeter wrapper for bass stem isolation
-│       └── tab/router.py      # Dynamic-programming fret routing + ASCII tab
+│       └── tab/
+│           ├── router.py      # Dynamic-programming fret routing + ASCII tab
+│           └── exporter.py    # MusicXML export with string/fret metadata
 └── tests/
     ├── test_dsp.py
     └── test_tab.py
@@ -69,6 +75,9 @@ pip install -e .[dev]
 - Validates audio file existence and extension.
 - Validates `ffmpeg` before processing.
 - Runs the ML → DSP → TAB pipeline sequence.
+- Saves `stems_output/<audio_name>/bass_tab.musicxml` after routing.
+
+The CLI now emits two complementary tab artifacts from the same routed sequence: a human-readable ASCII preview and a structured `.musicxml` file intended for notation editors and rendering engines.
 
 ### ✅ ML Layer (`ml/separator.py`)
 - Uses `spleeter:4stems` model.
@@ -87,6 +96,15 @@ pip install -e .[dev]
 - Loads router and DSP tunables from `config/settings.toml`.
 - Handles rests.
 - Renders 4-line ASCII tablature with bar separators every 4 beats.
+- Produces structured route events (`midi_pitch`, `string_index`, `fret_number`, `duration_in_beats`) for MusicXML export.
+
+### ✅ MusicXML Layer (`tab/exporter.py`)
+- Builds a `music21` Electric Bass part with Bass Clef.
+- Encodes physical fingering into `<technical>` nodes via `StringIndication` and `FretIndication`.
+- Preserves rests and beat durations in exported notation.
+- Compatible with MuseScore, Guitar Pro, AlphaTab, and Songsterr-style rendering pipelines.
+
+Because the exporter carries the exact DP-selected string/fret data, external notation software can reproduce the intended fingering instead of re-guessing positions from pitch only.
 
 ## 🔄 Pending / In Progress
 
@@ -108,6 +126,7 @@ pytest -v
 Current automated coverage includes:
 - DSP pitch estimation and beat quantization behavior.
 - Tab routing decisions and ASCII rendering.
+- MusicXML route event grouping used by the exporter.
 
 ## 🎓 Documentation
 

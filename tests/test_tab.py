@@ -74,3 +74,26 @@ def test_router_renders_sustain_without_retrigger():
     e_line = lines[3]
     assert e_line.startswith("E|")
     assert e_line == "E|0---"
+
+
+def test_router_builds_musicxml_route_with_sustain_grouping():
+    router = FretboardRouter()
+    midi_seq = [28, 28, None, None, 33]
+    states, _ = router.route_from_midi(midi_seq)
+    route = router.build_musicxml_route(midi_seq, states)
+
+    assert len(route) == 3
+    assert route[0] == {
+        "midi_pitch": 28,
+        "string_index": 4,
+        "fret_number": 0,
+        "duration_in_beats": 2.0,
+    }
+    assert route[1] == {
+        "midi_pitch": None,
+        "string_index": None,
+        "fret_number": None,
+        "duration_in_beats": 2.0,
+    }
+    assert route[2]["midi_pitch"] == 33
+    assert route[2]["duration_in_beats"] == 1.0
