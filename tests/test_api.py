@@ -17,7 +17,7 @@ client = TestClient(app)
 
 
 class FakeProcess:
-    """Minimal async subprocess stub for API tests."""
+    """Minimal stub for asyncio.subprocess.Process used in API tests."""
 
     def __init__(self, returncode=0, stdout=b"", stderr=b""):
         self.returncode = returncode

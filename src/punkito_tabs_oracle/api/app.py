@@ -15,6 +15,8 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+CLI_TIMEOUT_SECONDS = 300.0
+
 
 class TranscribeResponse(BaseModel):
     """Respuesta para el endpoint /api/transcribe"""
@@ -102,7 +104,7 @@ def create_app() -> FastAPI:
         
         temp_dir = None
         temp_audio_path = None
-        output_musicxml_path = None
+        bass_musicxml_path = None
         stdout = None
         stderr = None
         cmd: list[str] = []
@@ -119,7 +121,7 @@ def create_app() -> FastAPI:
             temp_audio_path.write_bytes(content)
             
             # Preparar rutas de salida
-            output_musicxml_path = temp_dir_path / "bass_tab.musicxml"
+            bass_musicxml_path = temp_dir_path / "bass_tab.musicxml"
             
             # Ejecutar CLI de forma asincronada usando asyncio.create_subprocess_exec
             cmd = [
@@ -140,7 +142,7 @@ def create_app() -> FastAPI:
             # Esperar a que el proceso termine (con timeout)
             try:
                 stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=300.0
+                    process.communicate(), timeout=CLI_TIMEOUT_SECONDS
                 )
                 return_code = process.returncode
             except asyncio.TimeoutError:
@@ -148,7 +150,7 @@ def create_app() -> FastAPI:
                 # Collect buffered output after termination for error reporting.
                 stdout, stderr = await process.communicate()
                 raise TimeoutError(
-                    "CLI subprocess execution timeout after 5 minutes"
+                    f"CLI subprocess execution timeout after {CLI_TIMEOUT_SECONDS} seconds"
                 )
 
             stdout_text = _decode_subprocess_output(stdout)
@@ -167,7 +169,7 @@ def create_app() -> FastAPI:
                 )
             
             # Verificar que el MusicXML se generó
-            if not output_musicxml_path.exists():
+            if not bass_musicxml_path.exists():
                 return TranscribeResponse(
                     status="error",
                     message="MusicXML generation failed",
@@ -183,7 +185,7 @@ def create_app() -> FastAPI:
             return TranscribeResponse(
                 status="success",
                 message="Audio transcribed successfully",
-                musicxml_path=str(output_musicxml_path),
+                musicxml_path=str(bass_musicxml_path),
                 tab=tab_content,
             )
         
