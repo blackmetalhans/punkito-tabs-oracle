@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Ruteador de trastes para bajo de 4 cuerdas.
+Ruteador de trastes para bajo de N cuerdas.
 Modela el mapeo de una secuencia temporal de f0 (Hz) -> MIDI -> (String, Fret)
 como un problema de camino mínimo (programación dinámica / Viterbi-like).
 
@@ -13,11 +13,9 @@ from dataclasses import dataclass
 import numpy as np
 import librosa
 
+from music21 import pitch as pitch_module
+
 from punkito_tabs_oracle.settings import load_settings
-
-
-# Definiciones y constantes
-STRING_ORDER = {1: "G", 2: "D", 3: "A", 4: "E"}  # 1 = G (más aguda), 4 = E (más grave)
 
 
 @dataclass(frozen=True)
@@ -57,8 +55,6 @@ class FretboardRouter:
             raise KeyError(f"Missing router_weights settings: {missing_weights}")
 
         strings = int(instrument["strings"])
-        if strings != 4:
-            raise ValueError("FretboardRouter currently supports only 4-string bass setups.")
 
         tuning_low_to_high = [int(v) for v in instrument["tuning_midi"]]
         if len(tuning_low_to_high) != strings:
@@ -73,6 +69,23 @@ class FretboardRouter:
         self.w1 = float(w_fret if w_fret is not None else weights["w_fret"])
         self.w2 = float(w_string if w_string is not None else weights["w_string"])
         self.w3 = float(w_open if w_open is not None else weights["w_open"])
+        self.quantization_grid = (0.25, 1.0 / 3.0)
+
+    def _quantize_duration(self, duration_in_beats: float) -> float:
+        """Snap durations to the strict micro-beat grid used by the exporter."""
+        if duration_in_beats <= 0:
+            return 0.25
+
+        candidates = sorted(
+            {0.25, 1.0 / 3.0, 0.5, 2.0 / 3.0, 0.75, 1.0, 1.25, 4.0 / 3.0, 1.5, 5.0 / 3.0, 1.75, 2.0}
+        )
+        return min(candidates, key=lambda value: abs(value - duration_in_beats))
+
+    def _string_label(self, string_index: int) -> str:
+        """Return a human-readable string label from the configured tuning."""
+        if string_index < 1 or string_index > self.strings:
+            raise ValueError("string_index out of range for configured tuning")
+        return pitch_module.Pitch(midi=int(self.tuning[string_index])).step
 
     def _midi_candidates(self, midi: Optional[int]) -> List[State]:
         """Devuelve todos los (string,fret) válidos para un MIDI dado.
@@ -230,12 +243,12 @@ class FretboardRouter:
             if midi_pitch == current_midi and state == current_state:
                 current_duration += 1.0
                 continue
-            append_event(current_midi, current_state, current_duration)
+            append_event(current_midi, current_state, self._quantize_duration(current_duration))
             current_midi = midi_pitch
             current_state = state
             current_duration = 1.0
 
-        append_event(current_midi, current_state, current_duration)
+        append_event(current_midi, current_state, self._quantize_duration(current_duration))
         return events
 
     def _render_tab(self, states: List[State], midi_sequence: Optional[List[Optional[int]]] = None) -> str:
@@ -251,8 +264,7 @@ class FretboardRouter:
         max_fret = max((s.fret for s in states if s.fret >= 0), default=0)
         cell_w = max(1, len(str(max_fret)))
 
-        # Construir líneas, orden G, D, A, E (1..4)
-        lines = {1: [], 2: [], 3: [], 4: []}
+        lines = {string_index: [] for string_index in range(1, self.strings + 1)}
         previous_midi = None
 
         for beat_idx, state in enumerate(states):
@@ -274,7 +286,7 @@ class FretboardRouter:
             )
 
             # Renderizar la nota de este beat en cada cuerda
-            for s_idx in range(1, 5):
+            for s_idx in range(1, self.strings + 1):
                 if state.string == s_idx:
                     if state.fret >= 0 and not is_sustain:
                         # Número de traste, centrado en la celda
@@ -290,7 +302,7 @@ class FretboardRouter:
 
         # Combinar en texto con nombres de cuerda al inicio
         text_lines = []
-        for s_idx in [1, 2, 3, 4]:
-            prefix = STRING_ORDER[s_idx] + "|"
+        for s_idx in range(1, self.strings + 1):
+            prefix = self._string_label(s_idx) + "|"
             text_lines.append(prefix + "".join(lines[s_idx]))
         return "\n".join(text_lines)

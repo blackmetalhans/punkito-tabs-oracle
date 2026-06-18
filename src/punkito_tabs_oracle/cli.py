@@ -109,7 +109,10 @@ def ejecutar_pipeline(audio_path: Path, locales: Dict[str, str]):
             print(tab)
             musicxml_route = router.build_musicxml_route(midi_sequence=midi_seq, states=states)
             musicxml_path = ruta_bajo_aislado.parent / "bass_tab.musicxml"
-            exported_path = MusicXMLExporter(musicxml_route).write(musicxml_path)
+            exported_path = MusicXMLExporter(
+                musicxml_route,
+                tempo_bpm=bpm,
+            ).write(musicxml_path)
             print(f"[+] MusicXML tab exported at: {exported_path}")
         else:
             print("[-] No f0 data available; skipping tab generation.")

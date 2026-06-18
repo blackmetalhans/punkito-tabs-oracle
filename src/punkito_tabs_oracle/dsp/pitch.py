@@ -66,6 +66,17 @@ class PitchTracker:
             if rms_silence_threshold is not None
             else dsp["rms_silence_threshold"]
         )
+        self.quantization_grid = (0.25, 1.0 / 3.0)
+
+    def quantize_duration(self, duration_in_beats: float) -> float:
+        """Snap a duration to the strict micro-beat grid used by the exporter."""
+        if duration_in_beats <= 0:
+            return 0.25
+
+        candidates = sorted(
+            {0.25, 1.0 / 3.0, 0.5, 2.0 / 3.0, 0.75, 1.0, 1.25, 4.0 / 3.0, 1.5, 5.0 / 3.0, 1.75, 2.0}
+        )
+        return min(candidates, key=lambda value: abs(value - duration_in_beats))
 
     def _interpolate_low_confidence(self, f0: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
         """Interpola huecos internos de f0 usando interpolación cúbica."""
