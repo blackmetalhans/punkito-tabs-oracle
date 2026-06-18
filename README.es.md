@@ -139,6 +139,18 @@ Cobertura automatizada actual:
    - punkito-tabs ./ruta/al/input.wav --lang es
    - Resultado: stems_output/<input_name>/bass_tab.musicxml
 
+### Cliente Python (programático)
+
+Se incluye un cliente Python mínimo para ejecutar el pipeline desde código:
+
+```py
+from punkito_tabs_oracle.client import run_pipeline
+res = run_pipeline('ruta/al/input.wav', lang='es')
+print(res['musicxml'])
+```
+
+El dict retornado contiene: 'bass_stem', 'musicxml', 'ascii_tab', 'bpm', 'route_events'.
+
 ---
 
 **Última actualización:** Junio de 2026
