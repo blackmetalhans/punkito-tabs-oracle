@@ -147,7 +147,7 @@ def create_app() -> FastAPI:
                 process.kill()
                 stdout, stderr = await process.communicate()
                 raise TimeoutError(
-                    "Transcription timeout after 5 minutes"
+                    "CLI subprocess execution timeout after 5 minutes"
                 )
 
             stdout_text = _decode_subprocess_output(stdout)
@@ -169,7 +169,7 @@ def create_app() -> FastAPI:
             if not output_musicxml_path.exists():
                 return TranscribeResponse(
                     status="error",
-                    message="Transcription failed",
+                    message="MusicXML generation failed",
                     error=_join_error_sections(
                         "MusicXML output file was not generated",
                         f"stdout:\n{stdout_text}" if stdout_text else "",
