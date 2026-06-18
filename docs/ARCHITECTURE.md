@@ -1,157 +1,80 @@
-# Punkito Tabs Oracle: System Architecture Specification
+# Punkito Tabs Oracle: Current Architecture (June 2026)
 
-This document details the software engineering design, directory layout, and structural flow of the Punkito Tabs Oracle engine.
+This document reflects the **current functional state** of the repository.
 
-## 1. Current State of the Repository (The Skeleton)
+## 1. Implemented System Flow
 
-At this moment, the repository is structured as a professional, installable Python package adhering to **PEP 518**. Here is the responsibility mapping of each component:
-
+```text
+Input Audio File
+   -> CLI validation (language, ffmpeg, path, extension)
+   -> ML separation (Spleeter 4 stems)
+   -> Isolated bass stem (bass.wav)
+   -> DSP pitch tracking (pYIN + YIN fallback)
+   -> Beat-quantized f0 sequence
+   -> Fretboard routing (dynamic programming)
+   -> ASCII tablature output
 ```
+
+## 2. Repository Layout and Responsibilities
+
+```text
 punkito-tabs-oracle/
 ├── config/
 │   ├── locales/
-│   │   ├── en.json            # Dynamic string mapping for English UI
-│   │   └── es.json            # Dynamic string mapping for Spanish UI
-│   └── settings.toml          # Physics constraints (Tuning, weights, frets)
-├── src/
-│   └── punkito_tabs_oracle/
-│       ├── __init__.py        # Packages exposure
-│       ├── cli.py             # Orchestrator & CLI argument parser (Entry point)
-│       ├── dsp/
-│       │   └── pitch.py       # STUB: Empty interface for pYIN algorithms
-│       ├── ml/
-│       │   └── separator.py   # STUB: Empty interface for Spleeter/TensorFlow
-│       └── tab/
-│           └── router.py      # STUB: Empty interface for fretboard physical optimization
-├── pyproject.toml             # Package metadata, executable registration & dependency locks
-└── .gitignore                 # Binary and heavy data isolation rules
+│   │   ├── en.json
+│   │   └── es.json
+│   └── settings.toml
+├── src/punkito_tabs_oracle/
+│   ├── cli.py
+│   ├── ml/separator.py
+│   ├── dsp/pitch.py
+│   └── tab/router.py
+└── tests/
+    ├── test_dsp.py
+    └── test_tab.py
 ```
 
-## 2. Functional Components of the Skeleton
+### `src/punkito_tabs_oracle/cli.py`
+- Entry point for `punkito-tabs`.
+- Loads i18n messages from `config/locales`.
+- Validates input audio and `ffmpeg` availability.
+- Orchestrates ML -> DSP -> TAB sequence.
 
-### A. The Setup Metadata (pyproject.toml)
+### `src/punkito_tabs_oracle/ml/separator.py`
+- `BassSeparator` wraps Spleeter (`spleeter:4stems`).
+- Runs separation and stores outputs under `stems_output/<input_name>/`.
+- Returns the generated `bass.wav` absolute path.
 
-Instead of a simple execution script, your project is now registered in your Windows registry as an editable package.
+### `src/punkito_tabs_oracle/dsp/pitch.py`
+- `PitchTracker.estimar_f0()` computes frame-level f0.
+- Uses `librosa.pyin` first, with fallback to `librosa.yin` when voiced confidence is too low.
+- Applies RMS silence masking (`f0=0.0` in low-energy frames).
+- `obtener_f0_por_pulso()` detects tempo/beats and returns beat-level median f0.
 
-Whenever you run the command `punkito-tabs` in your terminal (with the virtualenv activated), Windows knows it must invoke `punkito_tabs_oracle.cli:main` thanks to the `[project.scripts]` registration.
+### `src/punkito_tabs_oracle/tab/router.py`
+- `FretboardRouter` converts f0 to MIDI and finds ergonomic `(string, fret)` paths.
+- Uses dynamic programming with transition cost terms for movement and string preference.
+- Supports rests and renders 4-string ASCII tablature with bar separators every 4 beats.
 
-It locks down compatibility boundaries to prevent Python 3.11+ compilers from attempting to install incompatible TensorFlow binaries on Windows.
+## 3. Test Coverage (Current)
 
-### B. Decoupled Internationalization (i18n via JSON)
+### `tests/test_dsp.py`
+- Validates pitch estimation accuracy on synthetic sine waves.
+- Validates beat-quantized output behavior.
 
-The UI strings are entirely isolated from the executable code.
+### `tests/test_tab.py`
+- Validates open-string/low-fret decisions.
+- Validates bar rendering in ASCII tab output.
+- Validates rest handling.
 
-The orchestration engine in `cli.py` loads `config/locales/{lang}.json` dynamically based on the execution flags (`--lang en` or `--lang es`).
+## 4. Current Gaps
 
-This pattern guarantees that adding support for a new language (e.g., Latin) only requires dropping a new `{lang}.json` file in `config/locales/` without modifying a single line of Python code.
+- No end-to-end integration tests covering full CLI + ML + DSP + TAB runtime chain.
+- `config/settings.toml` exists but is currently empty and not wired into runtime parameters.
+- Heavy runtime dependencies (Spleeter/TensorFlow + Python version constraints) require controlled environment setup.
 
-## 3. The Signal & Algorithmic Pipeline (The Core to Populate)
+## 5. Immediate Next Milestones
 
-Once we start writing code within the modules inside `src/`, the data will flow through three heavily decoupled processing layers:
-
-```
-[ Input Audio: Polyphonic Mix (.mp3/.wav) ]
-                    │
-                    ▼
-┌───────────────────────────────────────┐
-│           ml/separator.py             │
-│  - Load Isolated Spleeter Model       │   (Runs U-Net Conv2D network via TensorFlow)
-│  - Compute Masking Spectrogram        │
-└───────────────────────────────────────┘
-                    │
-                    ▼
-            [ Bass Stem (.wav) ]
-                    │
-                    ▼
-┌───────────────────────────────────────┐
-│            dsp/pitch.py               │
-│  - Downsample signal to 22050Hz       │   (Uses Librosa pYIN tracking to estimate f0)
-│  - Compute autocorrelation & HMM      │
-└───────────────────────────────────────┘
-                    │
-                    ▼
-            [ f0/Pitch Time Series ]
-                    │
-                    ▼
-┌───────────────────────────────────────┐
-│            tab/router.py              │
-│  - Parse frequency to MIDI notes      │   (Heuristic / Dynamic Programming path-finder)
-│  - Map notes to 4-string fretboard    │
-│  - Apply transition-cost algorithms   │
-└───────────────────────────────────────┘
-                    │
-                    ▼
-        [ Print Optimized ASCII Tablature ]
-```
-
-## 4. Module Responsibilities
-
-### ml/separator.py (The Heavy Lifter)
-
-This module will host the neural network client. It imports TensorFlow and wraps Spleeter. Its only job is to:
-
-1. Intake an arbitrary polyphonic audio file
-2. Pass it through Spleeter's pre-trained 4-stem isolation model
-3. Extract the bass stem
-4. Return a normalized WAV file
-
-**Input:** Polyphonic audio (MP3 or WAV)  
-**Output:** Isolated bass stem (.wav)  
-**Dependencies:** TensorFlow, Spleeter, Librosa
-
-### dsp/pitch.py (The Precision Ear)
-
-This module imports Librosa. It takes the `bass.wav` generated in the previous step, reads the raw samples, downsamples them to a manageable sample rate ($22.05 \text{ kHz}$), and applies the **Probabilistic YIN (pYIN)** algorithm to produce a robust pitch trajectory free of octave errors.
-
-The output is a time-stamped series of frequency values representing the fundamental frequency ($f_0$) of the bass line over time.
-
-**Input:** Bass stem (.wav)  
-**Output:** f0 time series (MIDI notes or Hz values)  
-**Dependencies:** Librosa, NumPy, SciPy
-
-### tab/router.py (The Ergonomic Guitarist)
-
-This is the pure algorithmic engine. It converts the $f_0$ frequencies to MIDI values. Because a bass guitar has overlapping note positions (e.g., the fifth fret on the E string is the same pitch as the open A string), we use **Dynamic Programming** to find the sequence of (string, fret) pairs that minimizes physical hand movement while respecting ergonomic constraints.
-
-**Input:** f0 time series or MIDI sequence  
-**Output:** ASCII tablature  
-**Dependencies:** NumPy (for cost matrix computation)
-
-## 5. Example Output
-
-For a simple bass line on the open A and open E strings with some fifth-fret fills, the output might look like:
-
-```
-G|--------------------------------|
-D|--------------------------------|
-A|--------5---7---5---------------|
-E|----5---------------7---5-------|
-```
-
-Where:
-- Each vertical line represents a time step
-- Numbers represent fret positions (0 = open string)
-- Dashes represent silence or sustained notes on that string
-
----
-
-## 6. Technology Stack
-
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| **Audio I/O** | Librosa | Load audio, compute spectrograms |
-| **Neural Separation** | Spleeter + TensorFlow | Isolate bass stem |
-| **Pitch Tracking** | Librosa (pYIN) | Estimate fundamental frequency |
-| **Fretboard Routing** | NumPy + Custom DP | Optimize tab fingering |
-| **CLI & Config** | Dynaconf, Click/Argparse | CLI orchestration, i18n |
-| **Testing** | pytest | Unit and integration tests |
-
----
-
-## 7. Design Principles
-
-✅ **Modular:** Each stage (ML, DSP, Tab Routing) is independent and testable.  
-✅ **Bilingual:** Configuration and UI strings are externalized to JSON.  
-✅ **Pythonic:** Follows PEP 8, PEP 518, and modern Python packaging conventions.  
-✅ **Extensible:** New languages, algorithms, or bass tunings can be added without core code changes.  
-✅ **Documented:** Every module has clear input/output contracts.
+1. Add integration tests for complete pipeline execution.
+2. Move router/DSP tunables into `config/settings.toml` and load them from CLI runtime.
+3. Add batch processing mode and higher-level user interface options.
