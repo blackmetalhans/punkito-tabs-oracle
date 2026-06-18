@@ -191,6 +191,19 @@ def create_app() -> FastAPI:
         
         except HTTPException:
             raise
+        except TimeoutError as exc:
+            stderr_text = _decode_subprocess_output(stderr)
+            stdout_text = _decode_subprocess_output(stdout)
+            return TranscribeResponse(
+                status="error",
+                message="Transcription timed out",
+                error=_join_error_sections(
+                    str(exc),
+                    f"stderr:\n{stderr_text}" if stderr_text else "",
+                    f"stdout:\n{stdout_text}" if stdout_text else "",
+                    f"command: {' '.join(cmd)}" if cmd else "",
+                ),
+            )
         except Exception:
             stderr_text = _decode_subprocess_output(stderr)
             stdout_text = _decode_subprocess_output(stdout)
