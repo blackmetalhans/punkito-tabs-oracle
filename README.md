@@ -153,6 +153,16 @@ print(res['musicxml'])
 
 The returned dict contains: 'bass_stem', 'musicxml', 'ascii_tab', 'bpm', 'route_events'.
 
+### Quick run from the repository root
+
+If you want the simplest path for local execution, use the root-level client:
+
+```bash
+python client.py ./path/to/input.wav --lang en
+```
+
+This will generate the usual output under `stems_output/<input_name>/` and write `bass_tab.musicxml` next to the isolated bass stem.
+
 ---
 
 **Last Updated:** June 2026
