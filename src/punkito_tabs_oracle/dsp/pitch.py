@@ -325,3 +325,128 @@ class PitchTracker:
         f0_pulsos_with_articulation, bpm = self.obtener_f0_por_pulso(ruta_bajo)
         f0_values = np.array([val for val, _ in f0_pulsos_with_articulation], dtype=float)
         return f0_values, bpm
+
+    def detect_slides(
+        self,
+        f0: np.ndarray,
+        voiced_prob: np.ndarray,
+        min_duration_frames: int = 3,
+        onsets: Optional[np.ndarray] = None,
+    ) -> List[Tuple[int, int, int, int]]:
+        """Detecta deslices (glissandos) lineales en el contorno de f0.
+        
+        Identifica rampas de pitch donde la frecuencia cambia monótonamente a lo largo de
+        una duración mínima, sin interrupciones de onset, y devuelve los puntos inicio/fin
+        con conversión a MIDI.
+        
+        Args:
+            f0: Array de f0 continuo (Hz)
+            voiced_prob: Array de probabilidad de voz por frame
+            min_duration_frames: Duración mínima de rampa (frames) para ser considerada slide
+            onsets: Optional array de detecciones de onset
+            
+        Returns:
+            Lista de tuplas (start_frame, end_frame, start_midi, end_midi) para cada slide
+        """
+        slides: List[Tuple[int, int, int, int]] = []
+        
+        if len(f0) < min_duration_frames:
+            return slides
+        
+        if onsets is None:
+            onsets = np.array([], dtype=int)
+        else:
+            onsets = np.asarray(onsets, dtype=int)
+        onset_set = set(int(np.clip(o, 0, len(f0) - 1)) for o in onsets)
+        
+        # Crear máscara de frames válidos (voiced y con suficiente confianza)
+        valid_mask = (f0 > 0.0) & (voiced_prob >= self.voiced_confidence_threshold)
+        
+        i = 0
+        while i < len(f0):
+            # Buscar inicio de una posible rampa
+            if not valid_mask[i] or i in onset_set:
+                i += 1
+                continue
+            
+            # Iniciar búsqueda de rampa monotónica
+            ramp_start = i
+            ramp_direction = None  # 'up' o 'down'
+            ramp_end = i
+            
+            # Extender la rampa mientras sea monótona
+            for j in range(i + 1, len(f0)):
+                if not valid_mask[j] or j in onset_set:
+                    break
+                
+                # Calcular cambio de frecuencia
+                df = f0[j] - f0[j - 1]
+                
+                if ramp_direction is None:
+                    # Establecer dirección en el primer cambio significativo
+                    if abs(df) > 1.0:  # Threshold para ignorar pequeñas variaciones
+                        ramp_direction = "up" if df > 0 else "down"
+                        ramp_end = j
+                    else:
+                        ramp_end = j
+                elif ramp_direction == "up" and df >= -1.0:
+                    # Permitir pequeños retrocesos (< 1 Hz) en rampa ascendente
+                    ramp_end = j
+                elif ramp_direction == "down" and df <= 1.0:
+                    # Permitir pequeños avances (< 1 Hz) en rampa descendente
+                    ramp_end = j
+                else:
+                    # Dirección invertida: terminar rampa
+                    break
+            
+            # Si encontramos una rampa válida, registrarla
+            ramp_length = ramp_end - ramp_start + 1
+            if ramp_length >= min_duration_frames and ramp_direction is not None:
+                # Calcular MIDI start y end
+                midi_start = int(round(librosa.hz_to_midi(float(f0[ramp_start]))))
+                midi_end = int(round(librosa.hz_to_midi(float(f0[ramp_end]))))
+                
+                # Solo registrar si hay cambio de MIDI
+                if midi_start != midi_end:
+                    slides.append((ramp_start, ramp_end, midi_start, midi_end))
+            
+            # Avanzar al siguiente frame no procesado
+            i = ramp_end + 1
+        
+        return slides
+    
+    def _is_monotonic_ramp(
+        self,
+        f0_segment: np.ndarray,
+        voiced_segment: np.ndarray,
+        direction: str,
+        tolerance_hz: float = 1.0,
+    ) -> bool:
+        """Verifica si un segmento de f0 forma una rampa monótona en la dirección especificada.
+        
+        Args:
+            f0_segment: Segmento de f0 a verificar
+            voiced_segment: Máscara voiced correspondiente
+            direction: 'up' para ascendente, 'down' para descendente
+            tolerance_hz: Tolerancia para pequeños retrocesos
+            
+        Returns:
+            True si el segmento es una rampa monótona
+        """
+        valid_idx = np.where(voiced_segment)[0]
+        if len(valid_idx) < 2:
+            return False
+        
+        valid_f0 = f0_segment[valid_idx]
+        
+        # Calcular cambios
+        diffs = np.diff(valid_f0)
+        
+        if direction == "up":
+            # Permitir cambios positivos y pequeños negativos
+            return np.all(diffs >= -tolerance_hz)
+        elif direction == "down":
+            # Permitir cambios negativos y pequeños positivos
+            return np.all(diffs <= tolerance_hz)
+        
+        return False
