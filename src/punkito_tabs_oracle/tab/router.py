@@ -92,24 +92,41 @@ class FretboardRouter:
         self, midi: Optional[int], articulation_type: str = "normal"
     ) -> List[State]:
         """Devuelve todos los (string,fret) válidos para un MIDI dado.
-        Si midi es None, devuelve sólo el estado de descanso.
+        Si midi es None o articulation_type es 'dead', devuelve fallback states.
+        
+        Para dead notes, devuelve un estado unvoiced (None, -1) con articulation='dead'
+        para evitar colapso de trellis durante el traceback de Viterbi.
         """
-        if midi is None:
+        if midi is None or articulation_type == "dead":
+            # Devolver estado fallback: unvoiced con la articulation especificada
             return [State(None, -1, articulation_type)]
+        
         candidates: List[State] = []
         for s in range(1, self.strings + 1):
             fret = midi - self.tuning[s]
             if 0 <= fret <= self.max_fret:
                 candidates.append(State(s, int(fret), articulation_type))
+        
         if not candidates:
-            # No hay representación física -> rest
-            return [State(None, -1)]
+            # No hay representación física -> fallback rest state
+            return [State(None, -1, articulation_type)]
         return candidates
 
     def _transition_cost(self, u: State, v: State) -> float:
-        # Si alguno es descanso, coste 0
+        """Calcula el coste de transición entre dos estados.
+        
+        - Si alguno es unvoiced (rest o dead note), retorna coste neutro (0.0)
+        - Para transiciones entre notas vivas: coste basado en distancia de fret y cuerda
+        - Recompensa para cuerdas abiertas (fret=0)
+        """
+        # Si alguno es descanso o dead note, coste neutro para evitar penalización
         if u.string is None or v.string is None:
             return 0.0
+        
+        # Si la nota destino es dead, transición neutral
+        if v.articulation_type == "dead":
+            return 0.0
+        
         # Coste de movimiento horizontal y vertical
         cost = self.w1 * abs(v.fret - u.fret) + self.w2 * abs(v.string - u.string)
         # Recompensa por cuerda al aire: indicador devuelve -2.0 si fret==0
