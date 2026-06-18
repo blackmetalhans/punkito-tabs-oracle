@@ -118,7 +118,6 @@ class TestAPIEndpoints:
         # Response should be valid JSON regardless of success
         data = response.json()
         assert "status" in data
-        assert "message" in data
         assert isinstance(data.get("status"), str)
         assert isinstance(data.get("message"), str)
         assert data["status"] == "success"

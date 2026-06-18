@@ -103,8 +103,8 @@ def create_app() -> FastAPI:
         temp_dir = None
         temp_audio_path = None
         output_musicxml_path = None
-        stdout = b""
-        stderr = b""
+        stdout = None
+        stderr = None
         cmd: list[str] = []
         process = None
         
