@@ -5,6 +5,7 @@ Proporciona endpoint asincronos para transcripción de audio bass y generación 
 """
 
 import asyncio
+import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -92,10 +93,11 @@ def create_app() -> FastAPI:
             output_tab_path = temp_dir_path / "output.txt"
             
             # Ejecutar CLI de forma asincronada usando asyncio.create_subprocess_exec
+            # Firma del comando corregida: argumento posicional para el audio
             cmd = [
-                "punkito-tabs",
-                "--audio", str(temp_audio_path),
-                "--output-xml", str(output_musicxml_path),
+                sys.executable, "-m", "punkito_tabs_oracle.cli",
+                str(temp_audio_path),
+                "--output-dir", str(temp_dir_path)
             ]
             
             process = await asyncio.create_subprocess_exec(
