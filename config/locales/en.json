@@ -8,5 +8,18 @@
     "ERROR_INVALID_EXTENSION": "[-] Critical error: File extension '{}' is invalid. Supported formats: {}.",
     "ERROR_FFMPEG_MISSING": "[-] Critical error: 'ffmpeg' executable was not found on your system's PATH. Please install ffmpeg to decode MP3/WAV files.",
     "ERROR_NO_AUDIO_PROVIDED": "[-] Error: No audio file was specified.",
-    "SUCCESS_PIPELINE": "[+] Source separation and transcription completed successfully."
+    "SUCCESS_PIPELINE": "[+] Source separation and transcription completed successfully.",
+    "ERROR_ML_UNAVAILABLE": "[-] Critical error: ML separator is unavailable. Pipeline cannot continue.",
+    "ERROR_DSP_UNAVAILABLE": "[-] Critical error: DSP pitch tracker is unavailable. Pipeline cannot continue.",
+    "ERROR_ROUTER_UNAVAILABLE": "[-] Critical error: Router module is unavailable. Pipeline cannot continue.",
+    "ERROR_ISOLATION_FAILED": "[-] Critical error during stem isolation: {}",
+    "ERROR_PITCH_ESTIMATION": "[-] Error during pitch estimation: {}",
+    "ERROR_ROUTING": "[-] Error during routing: {}",
+    "ERROR_EMPTY_F0": "[-] Error: No valid f0 pulses were detected. Pipeline cannot continue.",
+    "ERROR_MUSICXML_NOT_WRITTEN": "[-] Critical error: MusicXML output was not written.",
+    "INFO_ISOLATED_STEM_SAVED": "[+] Isolated stem saved at: {}",
+    "INFO_DETECTED_TEMPO": "[+] Detected tempo: {:.1f} BPM",
+    "INFO_ESTIMATED_F0": "[+] Estimated {} beat-quantized f0 pulses from isolated bass stem.",
+    "INFO_ASCII_TAB": "\n[ASCII TAB OUTPUT]\n",
+    "INFO_MUSICXML_EXPORTED": "[+] MusicXML tab exported at: {}"
 }

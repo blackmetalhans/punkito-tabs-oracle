@@ -8,5 +8,18 @@
     "ERROR_INVALID_EXTENSION": "[-] Error crítico: La extensión '{}' es inválida. Formatos compatibles: {}.",
     "ERROR_FFMPEG_MISSING": "[-] Error crítico: El ejecutable 'ffmpeg' no se encontró en el PATH del sistema. Instala ffmpeg para poder decodificar archivos MP3/WAV.",
     "ERROR_NO_AUDIO_PROVIDED": "[-] Error: No se especificó ningún archivo de audio.",
-    "SUCCESS_PIPELINE": "[+] Separación de fuentes y transcripción completadas con éxito."
+    "SUCCESS_PIPELINE": "[+] Separación de fuentes y transcripción completadas con éxito.",
+    "ERROR_ML_UNAVAILABLE": "[-] Error crítico: El separador ML no está disponible. El pipeline no puede continuar.",
+    "ERROR_DSP_UNAVAILABLE": "[-] Error crítico: El tracker DSP no está disponible. El pipeline no puede continuar.",
+    "ERROR_ROUTER_UNAVAILABLE": "[-] Error crítico: El módulo Router no está disponible. El pipeline no puede continuar.",
+    "ERROR_ISOLATION_FAILED": "[-] Error crítico durante el aislamiento de la pista: {}",
+    "ERROR_PITCH_ESTIMATION": "[-] Error durante la estimación de tono: {}",
+    "ERROR_ROUTING": "[-] Error durante el ruteo: {}",
+    "ERROR_EMPTY_F0": "[-] Error: No se detectaron pulsos f0 válidos. El pipeline no puede continuar.",
+    "ERROR_MUSICXML_NOT_WRITTEN": "[-] Error crítico: No se escribió el archivo de salida MusicXML.",
+    "INFO_ISOLATED_STEM_SAVED": "[+] Stem aislado guardado en: {}",
+    "INFO_DETECTED_TEMPO": "[+] Tempo detectado: {:.1f} BPM",
+    "INFO_ESTIMATED_F0": "[+] Se estimaron {} pulsos f0 cuantizados por beat del stem de bajo aislado.",
+    "INFO_ASCII_TAB": "\n[SALIDA TAB ASCII]\n",
+    "INFO_MUSICXML_EXPORTED": "[+] Tablatura MusicXML exportada en: {}"
 }

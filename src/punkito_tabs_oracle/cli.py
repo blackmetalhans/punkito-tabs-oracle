@@ -10,7 +10,7 @@ import argparse
 import json
 import shutil
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Optional
 
 
 def resolver_ruta_config(lang: str) -> Path:
@@ -63,74 +63,159 @@ def validar_audio_entrada(ruta_archivo: str, locales: Dict[str, str]) -> Path:
     return path_obj
 
 
-def ejecutar_pipeline(audio_path: Path, locales: Dict[str, str]):
+def _localize(locales: Dict[str, str], key: str, default: str) -> str:
+    """Devuelve un mensaje localizado con fallback seguro."""
+    return locales.get(key, default)
+
+
+def ejecutar_pipeline(
+    audio_path: Path,
+    locales: Dict[str, str],
+    output_dir: Optional[Path] = None,
+) -> None:
     """Orquesta secuencialmente las etapas de separación U-Net, estimación pYIN y ruteo."""
     print(locales["STATUS_LOAD_MODEL"])
-    
+
+    destino_stems = output_dir if output_dir is not None else audio_path.parent / "stems_output"
+    destino_stems.mkdir(parents=True, exist_ok=True)
+
     # 1. EJECUCIÓN FASE 2: Separación neuronal offline de fuentes (ML)
     try:
         from punkito_tabs_oracle.ml.separator import BassSeparator
-        output_dir = Path("./stems_output")
-        separador = BassSeparator(output_dir=output_dir, locales=locales)
+        separador = BassSeparator(output_dir=destino_stems, locales=locales)
         ruta_bajo_aislado = separador.aislar(audio_path)
-        print(f"[+] Isolated stem saved at: {ruta_bajo_aislado}")
+        print(
+            _localize(
+                locales,
+                "INFO_ISOLATED_STEM_SAVED",
+                "[+] Isolated stem saved at: {}",
+            ).format(ruta_bajo_aislado)
+        )
     except ImportError:
-        print("[-] Warning: ml/separator.py is currently empty (stub mode). Skipping ML layer.")
+        print(
+            _localize(
+                locales,
+                "ERROR_ML_UNAVAILABLE",
+                "[-] Critical error: ML separator is unavailable. Pipeline cannot continue.",
+            ),
+            file=sys.stderr,
+        )
+        sys.exit(1)
     except Exception as e:
-        print(f"[-] Error crítico durante el aislamiento de la pista: {e}", file=sys.stderr)
+        print(
+            _localize(
+                locales,
+                "ERROR_ISOLATION_FAILED",
+                "[-] Error crítico durante el aislamiento de la pista: {}",
+            ).format(e),
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # 2. EJECUCIÓN FASE 3: Estimación espectral de tono con beat quantization (DSP)
     print(locales["STATUS_DSP_START"])
-    f0_pulsos = None
-    bpm = None
     try:
         from punkito_tabs_oracle.dsp.pitch import PitchTracker
         tracker = PitchTracker()
         f0_pulsos, bpm = tracker.obtener_f0_por_pulso(ruta_bajo_aislado)
-        print(f"[+] Detected tempo: {bpm:.1f} BPM")
-        print(f"[+] Estimated {len(f0_pulsos)} beat-quantized f0 pulses from isolated bass stem.")
+        print(
+            _localize(
+                locales,
+                "INFO_DETECTED_TEMPO",
+                "[+] Detected tempo: {:.1f} BPM",
+            ).format(bpm)
+        )
+        print(
+            _localize(
+                locales,
+                "INFO_ESTIMATED_F0",
+                "[+] Estimated {} beat-quantized f0 pulses from isolated bass stem.",
+            ).format(len(f0_pulsos))
+        )
     except ImportError:
-        print("[-] Warning: dsp/pitch.py is missing. Skipping DSP layer.")
+        print(
+            _localize(
+                locales,
+                "ERROR_DSP_UNAVAILABLE",
+                "[-] Critical error: DSP pitch tracker is unavailable. Pipeline cannot continue.",
+            ),
+            file=sys.stderr,
+        )
+        sys.exit(1)
     except Exception as e:
-        print(f"[-] Error during pitch estimation: {e}", file=sys.stderr)
+        print(
+            _localize(
+                locales,
+                "ERROR_PITCH_ESTIMATION",
+                "[-] Error during pitch estimation: {}",
+            ).format(e),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if len(f0_pulsos) == 0:
+        print(
+            _localize(
+                locales,
+                "ERROR_EMPTY_F0",
+                "[-] Error: No valid f0 pulses were detected. Pipeline cannot continue.",
+            ),
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # 3. EJECUCIÓN FASE 4: Mapeo y ruteo topológico de trastes (Router)
     print(locales["STATUS_TAB_GEN"])
     try:
         from punkito_tabs_oracle.tab import router
         from punkito_tabs_oracle.tab.exporter import MusicXMLExporter
-
-        router_available = True
     except ImportError:
-        router_available = False
-
-    if not router_available:
-        print("[-] Warning: Router module is unavailable. Skipping Router layer.")
-        print(locales["SUCCESS_PIPELINE"])
-        return
+        print(
+            _localize(
+                locales,
+                "ERROR_ROUTER_UNAVAILABLE",
+                "[-] Critical error: Router module is unavailable. Pipeline cannot continue.",
+            ),
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     try:
         router_instance = router.FretboardRouter()
-        if f0_pulsos is not None:
-            midi_seq = router_instance.f0_to_midi_sequence(list(f0_pulsos))
-            states, tab = router_instance.route_from_f0(list(f0_pulsos))
-            print("\n[ASCII TAB OUTPUT]\n")
-            print(tab)
-            musicxml_route = router_instance.build_musicxml_route(
-                midi_sequence=midi_seq,
-                states=states,
+        midi_seq = router_instance.f0_to_midi_sequence(list(f0_pulsos))
+        states, tab = router_instance.route_from_f0(list(f0_pulsos))
+        print(_localize(locales, "INFO_ASCII_TAB", "\n[ASCII TAB OUTPUT]\n"))
+        print(tab)
+        musicxml_route = router_instance.build_musicxml_route(
+            midi_sequence=midi_seq,
+            states=states,
+        )
+        musicxml_path = destino_stems / "bass_tab.musicxml"
+        exported_path = MusicXMLExporter(
+            musicxml_route,
+            tempo_bpm=bpm,
+        ).write(musicxml_path)
+        if not Path(exported_path).exists():
+            raise FileNotFoundError(
+                _localize(
+                    locales,
+                    "ERROR_MUSICXML_NOT_WRITTEN",
+                    "[-] Critical error: MusicXML output was not written.",
+                )
             )
-            musicxml_path = ruta_bajo_aislado.parent / "bass_tab.musicxml"
-            exported_path = MusicXMLExporter(
-                musicxml_route,
-                tempo_bpm=bpm,
-            ).write(musicxml_path)
-            print(f"[+] MusicXML tab exported at: {exported_path}")
-        else:
-            print("[-] No f0 data available; skipping tab generation.")
+        print(
+            _localize(
+                locales,
+                "INFO_MUSICXML_EXPORTED",
+                "[+] MusicXML tab exported at: {}",
+            ).format(exported_path)
+        )
     except Exception as e:
-        print(f"[-] Error during routing: {e}", file=sys.stderr)
+        print(
+            _localize(locales, "ERROR_ROUTING", "[-] Error during routing: {}").format(e),
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     print(locales["SUCCESS_PIPELINE"])
 
@@ -139,8 +224,25 @@ def main():
     parser = argparse.ArgumentParser(
         description="Punkito Tabs Oracle - Structural CLI & Audio Pipeline Orchestrator"
     )
-    parser.add_argument("audio_file", type=str, nargs="?", help="Path absolute or relative to the source audio file")
-    parser.add_argument("--lang", type=str, choices=["en", "es"], default="en", help="Interface and log execution language")
+    parser.add_argument(
+        "audio_file",
+        type=str,
+        nargs="?",
+        help="Path absolute or relative to the source audio file",
+    )
+    parser.add_argument(
+        "--lang",
+        type=str,
+        choices=["en", "es"],
+        default="en",
+        help="Interface and log execution language",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="./stems_output",
+        help="Directory for stems and MusicXML output.",
+    )
     args = parser.parse_args()
 
     locales = cargar_locales(args.lang)
@@ -157,7 +259,8 @@ def main():
         sys.exit(1)
 
     audio_path_validado = validar_audio_entrada(args.audio_file, locales)
-    ejecutar_pipeline(audio_path_validado, locales)
+    output_dir = Path(args.output_dir).expanduser().resolve()
+    ejecutar_pipeline(audio_path_validado, locales, output_dir=output_dir)
 
 
 if __name__ == "__main__":
