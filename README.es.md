@@ -130,6 +130,15 @@ Cobertura automatizada actual:
 
 - **[ARCHITECTURE.md](./docs/ARCHITECTURE.md)** — Arquitectura actual y responsabilidades por módulo.
 
+## 🔧 Instalación y Validación Rápida
+
+1. Asegura Python 3.10 y ffmpeg en el PATH.
+2. Instala el paquete y dependencias de desarrollo: pip install -e .[dev]
+3. Ejecuta pruebas: pytest -q
+4. Ejemplo rápido (genera MusicXML para input.wav):
+   - punkito-tabs ./ruta/al/input.wav --lang es
+   - Resultado: stems_output/<input_name>/bass_tab.musicxml
+
 ---
 
 **Última actualización:** Junio de 2026

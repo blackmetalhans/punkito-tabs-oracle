@@ -132,6 +132,15 @@ Current automated coverage includes:
 
 - **[ARCHITECTURE.md](./docs/ARCHITECTURE.md)** — Current architecture and module responsibilities.
 
+## 🔧 Installation & Quick Validation
+
+1. Ensure Python 3.10 and ffmpeg are installed and on PATH.
+2. Install package and dev deps: pip install -e .[dev]
+3. Run tests: pytest -q
+4. Quick example (generate MusicXML for input.wav):
+   - punkito-tabs ./path/to/input.wav --lang en
+   - Result: stems_output/<input_name>/bass_tab.musicxml
+
 ---
 
 **Last Updated:** June 2026
