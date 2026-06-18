@@ -6,17 +6,18 @@ como un problema de camino mínimo (programación dinámica / Viterbi-like).
 
 Comentarios en español.
 """
+from pathlib import Path
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
 import numpy as np
 import librosa
 
+from punkito_tabs_oracle.settings import load_settings
+
 
 # Definiciones y constantes
 STRING_ORDER = {1: "G", 2: "D", 3: "A", 4: "E"}  # 1 = G (más aguda), 4 = E (más grave)
-TUNING = {1: 43, 2: 38, 3: 33, 4: 28}  # MIDI base notes por cuerda
-MAX_FRET = 21
 
 
 @dataclass(frozen=True)
@@ -31,13 +32,47 @@ class FretboardRouter:
     - route_from_f0: acepta array de f0 (Hz) y devuelve (states, tab_ascii)
     - route_from_midi: acepta array con valores MIDI (int) y devuelve (states, tab_ascii)
 
-    Los pesos por defecto siguen la especificación.
+    Carga hiperparámetros desde config/settings.toml.
     """
 
-    def __init__(self, w1: float = 1.0, w2: float = 0.5, w3: float = 1.0):
-        self.w1 = float(w1)
-        self.w2 = float(w2)
-        self.w3 = float(w3)
+    def __init__(
+        self,
+        settings_path: Optional[Path] = None,
+        w_fret: Optional[float] = None,
+        w_string: Optional[float] = None,
+        w_open: Optional[float] = None,
+    ):
+        settings = load_settings(settings_path)
+        instrument = settings.get("instrument", {})
+        weights = settings.get("router_weights", {})
+
+        required_instrument = ("strings", "tuning_midi", "max_fret")
+        missing_instrument = [k for k in required_instrument if k not in instrument]
+        if missing_instrument:
+            raise KeyError(f"Missing instrument settings: {missing_instrument}")
+
+        required_weights = ("w_fret", "w_string", "w_open")
+        missing_weights = [k for k in required_weights if k not in weights]
+        if missing_weights:
+            raise KeyError(f"Missing router_weights settings: {missing_weights}")
+
+        strings = int(instrument["strings"])
+        if strings != 4:
+            raise ValueError("FretboardRouter currently supports only 4-string bass setups.")
+
+        tuning_low_to_high = [int(v) for v in instrument["tuning_midi"]]
+        if len(tuning_low_to_high) != strings:
+            raise ValueError("instrument.tuning_midi length must match instrument.strings")
+
+        # Internamente usamos 1=aguda ... 4=grave.
+        tuning_high_to_low = list(reversed(tuning_low_to_high))
+        self.tuning = {idx + 1: tuning_high_to_low[idx] for idx in range(strings)}
+        self.max_fret = int(instrument["max_fret"])
+        self.strings = strings
+
+        self.w1 = float(w_fret if w_fret is not None else weights["w_fret"])
+        self.w2 = float(w_string if w_string is not None else weights["w_string"])
+        self.w3 = float(w_open if w_open is not None else weights["w_open"])
 
     def _midi_candidates(self, midi: Optional[int]) -> List[State]:
         """Devuelve todos los (string,fret) válidos para un MIDI dado.
@@ -46,9 +81,9 @@ class FretboardRouter:
         if midi is None:
             return [State(None, -1)]
         candidates: List[State] = []
-        for s in range(1, 5):
-            fret = midi - TUNING[s]
-            if 0 <= fret <= MAX_FRET:
+        for s in range(1, self.strings + 1):
+            fret = midi - self.tuning[s]
+            if 0 <= fret <= self.max_fret:
                 candidates.append(State(s, int(fret)))
         if not candidates:
             # No hay representación física -> rest
@@ -128,7 +163,7 @@ class FretboardRouter:
                 pass
 
         # Render ASCII tab
-        tab = self._render_tab(states)
+        tab = self._render_tab(states, midi_sequence)
         return (states, tab)
 
     def route_from_f0(self, f0_array: List[float]) -> Tuple[List[State], str]:
@@ -144,7 +179,7 @@ class FretboardRouter:
                 midi_seq.append(int(round(librosa.hz_to_midi(float(f)))))
         return self.route_from_midi(midi_seq)
 
-    def _render_tab(self, states: List[State]) -> str:
+    def _render_tab(self, states: List[State], midi_sequence: Optional[List[Optional[int]]] = None) -> str:
         """Crea una representación ASCII clásica de 4 líneas con barras de compás cada 4 beats.
 
         - Cada carácter representa un pulso/beat (cuantizado).
@@ -159,6 +194,7 @@ class FretboardRouter:
 
         # Construir líneas, orden G, D, A, E (1..4)
         lines = {1: [], 2: [], 3: [], 4: []}
+        previous_midi = None
 
         for beat_idx, state in enumerate(states):
             # Cada beat_idx=0,1,2,3 forma un compás; cada beat_idx%4==0 = nueva barra
@@ -167,19 +203,31 @@ class FretboardRouter:
                 for s_idx in range(1, 5):
                     lines[s_idx].append("|")
 
+            current_midi = None
+            if midi_sequence is not None and beat_idx < len(midi_sequence):
+                current_midi = midi_sequence[beat_idx]
+            is_sustain = (
+                beat_idx > 0
+                and state.string is not None
+                and previous_midi is not None
+                and current_midi is not None
+                and current_midi == previous_midi
+            )
+
             # Renderizar la nota de este beat en cada cuerda
             for s_idx in range(1, 5):
                 if state.string == s_idx:
-                    if state.fret >= 0:
+                    if state.fret >= 0 and not is_sustain:
                         # Número de traste, centrado en la celda
                         cell = str(state.fret).rjust(cell_w, " ")
                     else:
-                        # Descanso en cuerda al aire (oculto)
+                        # Sustain o descanso en cuerda al aire (oculto)
                         cell = "-" * cell_w
                 else:
                     # Silencio en esta cuerda
                     cell = "-" * cell_w
                 lines[s_idx].append(cell)
+            previous_midi = current_midi
 
         # Combinar en texto con nombres de cuerda al inicio
         text_lines = []

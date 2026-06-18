@@ -87,7 +87,7 @@ def ejecutar_pipeline(audio_path: Path, locales: Dict[str, str]):
     bpm = None
     try:
         from punkito_tabs_oracle.dsp.pitch import PitchTracker
-        tracker = PitchTracker(sr=22050, frame_length=2048, hop_length=512)
+        tracker = PitchTracker()
         f0_pulsos, bpm = tracker.obtener_f0_por_pulso(ruta_bajo_aislado)
         print(f"[+] Detected tempo: {bpm:.1f} BPM")
         print(f"[+] Estimated {len(f0_pulsos)} beat-quantized f0 pulses from isolated bass stem.")

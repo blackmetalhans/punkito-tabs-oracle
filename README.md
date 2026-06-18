@@ -11,7 +11,7 @@
 Punkito Tabs Oracle is an audio processing pipeline that:
 
 1. **Isolates the bass stem** from polyphonic audio using Spleeter.
-2. **Detects fundamental pitch (f0)** with `librosa.pyin` and YIN fallback.
+2. **Detects fundamental pitch (f0)** with `librosa.pyin` and cubic interpolation for low-confidence frames.
 3. **Quantizes pitches by beat** to improve readability.
 4. **Maps notes to fretboard positions** using dynamic-programming routing.
 5. **Generates ASCII tablature** for 4-string bass.
@@ -22,7 +22,7 @@ Punkito Tabs Oracle is an audio processing pipeline that:
 flowchart TD
     A[Input audio] --> B[ML: BassSeparator - Spleeter 4 stems]
     B --> C[Isolated bass.wav]
-    C --> D[DSP: PitchTracker - pYIN/YIN + RMS silence filter]
+    C --> D[DSP: PitchTracker - pYIN + cubic interpolation + RMS silence filter]
     D --> E[Beat-quantized f0 pulses]
     E --> F[Tab: FretboardRouter - DP cost optimization]
     F --> G[ASCII tab output]
@@ -42,7 +42,7 @@ punkito-tabs-oracle/
 ├── src/
 │   └── punkito_tabs_oracle/
 │       ├── cli.py             # Pipeline orchestration CLI
-│       ├── dsp/pitch.py       # pYIN + YIN fallback + beat quantization
+│       ├── dsp/pitch.py       # pYIN + interpolation + beat quantization
 │       ├── ml/separator.py    # Spleeter wrapper for bass stem isolation
 │       └── tab/router.py      # Dynamic-programming fret routing + ASCII tab
 └── tests/
@@ -77,13 +77,14 @@ pip install -e .[dev]
 
 ### ✅ DSP Layer (`dsp/pitch.py`)
 - pYIN-based f0 estimation in 30–400 Hz.
-- Automatic YIN fallback for low voiced confidence.
+- Cubic interpolation for low-confidence / unvoiced frames.
 - RMS-based silence masking.
 - Beat tracking + median f0 quantization per beat.
 
 ### ✅ TAB Layer (`tab/router.py`)
 - Converts Hz → MIDI.
 - Computes ergonomic state path (string/fret) with dynamic programming.
+- Loads router and DSP tunables from `config/settings.toml`.
 - Handles rests.
 - Renders 4-line ASCII tablature with bar separators every 4 beats.
 
@@ -93,7 +94,7 @@ pip install -e .[dev]
 - [x] Implement bass stem separation wrapper.
 - [x] Implement fretboard routing and tab rendering.
 - [ ] Add end-to-end integration tests for full CLI pipeline.
-- [ ] Integrate runtime tunables from `config/settings.toml`.
+- [x] Integrate runtime tunables from `config/settings.toml`.
 - [ ] Add batch mode and GUI.
 
 ## 📊 Testing

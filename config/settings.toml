@@ -1,6 +1,6 @@
 [instrument]
 strings = 4
-tuning_midi = [41, 46, 51, 56] # E1, A1, D2, G2
+tuning_midi = [28, 33, 38, 43] # E1, A1, D2, G2
 max_fret = 24
 
 [router_weights]
@@ -10,6 +10,9 @@ w_open = -0.2    # Recompensa por anclaje en cuerda al aire
 
 [dsp]
 sample_rate = 22050
+frame_length = 2048
 hop_length = 256
 fmin = 41.2      # Fundamental de E1
 fmax = 392.0     # Fundamental de G4
+voiced_confidence_threshold = 0.05
+rms_silence_threshold = 0.05

@@ -9,7 +9,7 @@ Input Audio File
    -> CLI validation (language, ffmpeg, path, extension)
    -> ML separation (Spleeter 4 stems)
    -> Isolated bass stem (bass.wav)
-   -> DSP pitch tracking (pYIN + YIN fallback)
+   -> DSP pitch tracking (pYIN + cubic interpolation)
    -> Beat-quantized f0 sequence
    -> Fretboard routing (dynamic programming)
    -> ASCII tablature output
@@ -47,13 +47,13 @@ punkito-tabs-oracle/
 
 ### `src/punkito_tabs_oracle/dsp/pitch.py`
 - `PitchTracker.estimar_f0()` computes frame-level f0.
-- Uses `librosa.pyin` first, with fallback to `librosa.yin` when voiced confidence is too low.
+- Uses `librosa.pyin` first, then cubic interpolation for low-confidence or unvoiced frames.
 - Applies RMS silence masking (`f0=0.0` in low-energy frames).
 - `obtener_f0_por_pulso()` detects tempo/beats and returns beat-level median f0.
 
 ### `src/punkito_tabs_oracle/tab/router.py`
 - `FretboardRouter` converts f0 to MIDI and finds ergonomic `(string, fret)` paths.
-- Uses dynamic programming with transition cost terms for movement and string preference.
+- Uses dynamic programming with transition cost terms loaded from `config/settings.toml`.
 - Supports rests and renders 4-string ASCII tablature with bar separators every 4 beats.
 
 ## 3. Test Coverage (Current)
@@ -70,11 +70,11 @@ punkito-tabs-oracle/
 ## 4. Current Gaps
 
 - No end-to-end integration tests covering full CLI + ML + DSP + TAB runtime chain.
-- `config/settings.toml` exists but is currently empty and not wired into runtime parameters.
+- `config/settings.toml` contains instrument, router, and DSP parameters used at runtime.
 - Heavy runtime dependencies (Spleeter/TensorFlow + Python version constraints) require controlled environment setup.
 
 ## 5. Immediate Next Milestones
 
 1. Add integration tests for complete pipeline execution.
-2. Move router/DSP tunables into `config/settings.toml` and load them from CLI runtime.
+2. Expand batch mode and higher-level UI around the existing configurable pipeline.
 3. Add batch processing mode and higher-level user interface options.

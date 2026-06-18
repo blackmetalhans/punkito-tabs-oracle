@@ -61,3 +61,16 @@ def test_router_handles_rests():
 
     # El tab debe ser válido
     assert '\n' in tab, "El tab debe contener múltiples líneas"
+
+
+def test_router_renders_sustain_without_retrigger():
+    """Si el pitch se repite en beats consecutivos, debe mostrarse sustain sin retrigger."""
+    midi_seq = [28, 28, 28, 28]
+    router = FretboardRouter()
+    _, tab = router.route_from_midi(midi_seq)
+
+    lines = tab.split("\n")
+    assert len(lines) == 4
+    e_line = lines[3]
+    assert e_line.startswith("E|")
+    assert e_line == "E|0---"

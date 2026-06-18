@@ -9,7 +9,7 @@
 Punkito Tabs Oracle es un pipeline de audio que:
 
 1. **Aísla el stem de bajo** desde audio polifónico con Spleeter.
-2. **Detecta el tono fundamental (f0)** con `librosa.pyin` y fallback YIN.
+2. **Detecta el tono fundamental (f0)** con `librosa.pyin` y interpolación cúbica para frames de baja confianza.
 3. **Cuantiza tonos por pulso/beat** para mejorar legibilidad musical.
 4. **Mapea notas al diapasón** con ruteo por programación dinámica.
 5. **Genera tablatura ASCII** para bajo de 4 cuerdas.
@@ -20,7 +20,7 @@ Punkito Tabs Oracle es un pipeline de audio que:
 flowchart TD
     A[Audio de entrada] --> B[ML: BassSeparator - Spleeter 4 stems]
     B --> C[bass.wav aislado]
-    C --> D[DSP: PitchTracker - pYIN/YIN + filtro RMS]
+    C --> D[DSP: PitchTracker - pYIN + interpolación cúbica + filtro RMS]
     D --> E[f0 cuantizado por pulsos]
     E --> F[Tab: FretboardRouter - optimización por costo]
     F --> G[Salida ASCII tab]
@@ -40,7 +40,7 @@ punkito-tabs-oracle/
 ├── src/
 │   └── punkito_tabs_oracle/
 │       ├── cli.py             # CLI que orquesta el pipeline
-│       ├── dsp/pitch.py       # pYIN + fallback YIN + cuantización por beat
+│       ├── dsp/pitch.py       # pYIN + interpolación + cuantización por beat
 │       ├── ml/separator.py    # Wrapper de Spleeter para aislar bajo
 │       └── tab/router.py      # Ruteo de trastes + render ASCII
 └── tests/
@@ -75,7 +75,7 @@ pip install -e .[dev]
 
 ### ✅ Capa DSP (`dsp/pitch.py`)
 - Estimación de f0 con pYIN (30–400 Hz).
-- Fallback automático a YIN con baja confianza.
+- Interpolación cúbica para frames no confiables o no voiceados.
 - Enmascarado de silencio por RMS.
 - Detección de tempo y cuantización por pulso.
 
@@ -91,7 +91,7 @@ pip install -e .[dev]
 - [x] Implementar wrapper de separación de bajo.
 - [x] Implementar ruteador de trastes y render ASCII.
 - [ ] Agregar pruebas de integración end-to-end del pipeline completo por CLI.
-- [ ] Integrar parámetros de ejecución desde `config/settings.toml`.
+- [x] Integrar parámetros de ejecución desde `config/settings.toml`.
 - [ ] Agregar modo batch e interfaz gráfica.
 
 ## 📊 Pruebas

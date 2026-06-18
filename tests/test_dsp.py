@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+import librosa
 
 from punkito_tabs_oracle.dsp.pitch import PitchTracker
 
@@ -57,3 +58,42 @@ def test_pitchtracker_beat_quantization():
     median_pulso = float(np.median(voiced_pulsos))
     rel_error = abs(median_pulso - f) / f
     assert rel_error < 0.05, f"Error relativo en pulsos: {rel_error:.4f}"
+
+
+def test_pitchtracker_interpolates_low_confidence_without_yin(monkeypatch):
+    sr = 22050
+    fake_audio = np.zeros(sr, dtype=float)
+    yin_calls = {"count": 0}
+
+    def fake_load(_path, sr, mono):
+        return fake_audio, sr
+
+    def fake_pyin(_y, fmin, fmax, sr, frame_length, hop_length):
+        f0 = np.array([110.0, np.nan, np.nan, 110.0], dtype=float)
+        voiced_flag = np.array([True, False, False, True], dtype=bool)
+        voiced_prob = np.array([0.9, 0.01, 0.01, 0.95], dtype=float)
+        return f0, voiced_flag, voiced_prob
+
+    def fake_rms(y, frame_length, hop_length):
+        return np.ones((1, 4), dtype=float)
+
+    def fake_yin(*args, **kwargs):
+        yin_calls["count"] += 1
+        raise AssertionError("YIN no debe ejecutarse")
+
+    monkeypatch.setattr(librosa, "load", fake_load)
+    monkeypatch.setattr(librosa, "pyin", fake_pyin)
+    monkeypatch.setattr(librosa.feature, "rms", fake_rms)
+    monkeypatch.setattr(librosa, "yin", fake_yin)
+
+    tracker = PitchTracker(
+        sr=sr,
+        frame_length=2048,
+        hop_length=512,
+        voiced_confidence_threshold=0.5,
+        rms_silence_threshold=0.0,
+    )
+    f0 = tracker.estimar_f0(Path("dummy.wav"))
+
+    assert yin_calls["count"] == 0
+    assert np.allclose(f0, np.array([110.0, 110.0, 110.0, 110.0], dtype=float), atol=1e-3)
