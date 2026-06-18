@@ -26,7 +26,7 @@ class TranscribeResponse(BaseModel):
 
 
 def _decode_subprocess_output(output: Optional[bytes]) -> str:
-    """Decode subprocess stdout/stderr with a safe fallback."""
+    """Decode UTF-8 subprocess output, replacing invalid bytes and None."""
     if not output:
         return ""
     return output.decode("utf-8", errors="replace").strip()
@@ -38,7 +38,7 @@ def _join_error_sections(*sections: str) -> str:
 
 
 def _extract_ascii_tab(stdout_text: str) -> str:
-    """Extract the ASCII tab block from CLI stdout when present."""
+    """Extract the ASCII tab block, or return raw stdout when no marker exists."""
     marker = "[ASCII TAB OUTPUT]"
     if marker not in stdout_text:
         return stdout_text
@@ -145,6 +145,7 @@ def create_app() -> FastAPI:
                 return_code = process.returncode
             except asyncio.TimeoutError:
                 process.kill()
+                # Collect buffered output after termination for error reporting.
                 stdout, stderr = await process.communicate()
                 raise TimeoutError(
                     "CLI subprocess execution timeout after 5 minutes"

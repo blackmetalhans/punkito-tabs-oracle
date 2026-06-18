@@ -33,7 +33,7 @@ class FakeProcess:
 
 
 def make_success_subprocess(calls):
-    """Create a fake subprocess factory that emits a MusicXML file."""
+    """Create a fake async subprocess factory for successful API tests."""
 
     async def _fake_create_subprocess_exec(*cmd, stdout=None, stderr=None):
         calls.append(cmd)
@@ -45,7 +45,7 @@ def make_success_subprocess(calls):
                 b"[ASCII TAB OUTPUT]\n"
                 b"E|--0--\n"
                 b"A|--5--\n"
-                b"[+] MusicXML tab exported at: stub\n"
+                b"[+] MusicXML tab exported at: bass_tab.musicxml\n"
             ),
         )
 
@@ -122,6 +122,7 @@ class TestAPIEndpoints:
         assert isinstance(data.get("status"), str)
         assert isinstance(data.get("message"), str)
         assert data["status"] == "success"
+        assert data["musicxml_path"].endswith("bass_tab.musicxml")
         assert data["tab"] == "E|--0--\nA|--5--"
         assert calls
         cmd = calls[0]
