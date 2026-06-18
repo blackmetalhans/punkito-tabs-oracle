@@ -7,11 +7,49 @@ import pytest
 from fastapi.testclient import TestClient
 from pathlib import Path
 import io
+import sys
 
+import punkito_tabs_oracle.api.app as app_module
 from punkito_tabs_oracle.api.app import app
 
 
 client = TestClient(app)
+
+
+class FakeProcess:
+    """Minimal stub for asyncio.subprocess.Process used in API tests."""
+
+    def __init__(self, returncode=0, stdout=b"", stderr=b""):
+        self.returncode = returncode
+        self._stdout = stdout
+        self._stderr = stderr
+        self.killed = False
+
+    async def communicate(self):
+        return self._stdout, self._stderr
+
+    def kill(self):
+        self.killed = True
+
+
+def make_success_subprocess(calls):
+    """Create a fake async subprocess factory for successful API tests."""
+
+    async def _fake_create_subprocess_exec(*cmd, stdout=None, stderr=None):
+        calls.append(cmd)
+        output_dir = Path(cmd[cmd.index("--output-dir") + 1])
+        (output_dir / "bass_tab.musicxml").write_text("<score-partwise />", encoding="utf-8")
+        return FakeProcess(
+            returncode=0,
+            stdout=(
+                b"[ASCII TAB OUTPUT]\n"
+                b"E|--0--\n"
+                b"A|--5--\n"
+                b"[+] MusicXML tab exported at: bass_tab.musicxml\n"
+            ),
+        )
+
+    return _fake_create_subprocess_exec
 
 
 class TestAPIEndpoints:
@@ -44,8 +82,14 @@ class TestAPIEndpoints:
         data = response.json()
         assert "Invalid audio format" in data["detail"]
 
-    def test_transcribe_endpoint_valid_extensions(self):
+    def test_transcribe_endpoint_valid_extensions(self, monkeypatch):
         """Test that valid extensions are accepted."""
+        calls = []
+        monkeypatch.setattr(
+            app_module.asyncio,
+            "create_subprocess_exec",
+            make_success_subprocess(calls),
+        )
         valid_extensions = ["test.mp3", "test.wav", "test.flac", "test.m4a", "test.ogg"]
         
         for filename in valid_extensions:
@@ -55,11 +99,16 @@ class TestAPIEndpoints:
             
             response = client.post("/api/transcribe", files={"file": audio_file})
             
-            # May fail due to CLI not being available, but should not reject based on extension
-            assert response.status_code != 400  # Not a format validation error
+            assert response.status_code == 200
 
-    def test_transcribe_response_structure(self):
+    def test_transcribe_response_structure(self, monkeypatch):
         """Test that transcribe response has correct structure."""
+        calls = []
+        monkeypatch.setattr(
+            app_module.asyncio,
+            "create_subprocess_exec",
+            make_success_subprocess(calls),
+        )
         # Create a fake audio file
         fake_audio = b"fake audio content"
         audio_file = ("test.wav", io.BytesIO(fake_audio), "audio/wav")
@@ -69,9 +118,67 @@ class TestAPIEndpoints:
         # Response should be valid JSON regardless of success
         data = response.json()
         assert "status" in data
-        assert "message" in data
         assert isinstance(data.get("status"), str)
         assert isinstance(data.get("message"), str)
+        assert data["status"] == "success"
+        assert data["musicxml_path"].endswith("bass_tab.musicxml")
+        assert data["tab"] == "E|--0--\nA|--5--"
+        assert calls
+        cmd = calls[0]
+        assert cmd[0] == sys.executable
+        assert cmd[1:3] == ("-m", "punkito_tabs_oracle.cli")
+        assert "--output-dir" in cmd
+        assert "--audio" not in cmd
+        assert "--output-xml" not in cmd
+
+    def test_transcribe_endpoint_includes_stderr_on_cli_failure(self, monkeypatch):
+        """Test that CLI stderr is surfaced in the JSON error payload."""
+
+        async def fake_create_subprocess_exec(*cmd, stdout=None, stderr=None):
+            return FakeProcess(
+                returncode=2,
+                stderr=b"usage: punkito-tabs ...\ninvalid arguments\n",
+            )
+
+        monkeypatch.setattr(
+            app_module.asyncio,
+            "create_subprocess_exec",
+            fake_create_subprocess_exec,
+        )
+
+        audio_file = ("test.wav", io.BytesIO(b"fake audio content"), "audio/wav")
+        response = client.post("/api/transcribe", files={"file": audio_file})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "error"
+        assert data["message"] == "CLI execution failed"
+        assert "exit_code: 2" in data["error"]
+        assert "stderr:" in data["error"]
+        assert "invalid arguments" in data["error"]
+
+    def test_transcribe_endpoint_includes_traceback_on_startup_exception(self, monkeypatch):
+        """Test that subprocess startup exceptions include traceback details."""
+
+        async def fake_create_subprocess_exec(*cmd, stdout=None, stderr=None):
+            raise FileNotFoundError("process launch failed")
+
+        monkeypatch.setattr(
+            app_module.asyncio,
+            "create_subprocess_exec",
+            fake_create_subprocess_exec,
+        )
+
+        audio_file = ("test.wav", io.BytesIO(b"fake audio content"), "audio/wav")
+        response = client.post("/api/transcribe", files={"file": audio_file})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "error"
+        assert "Traceback" in data["error"]
+        assert "FileNotFoundError" in data["error"]
+        assert "process launch failed" in data["error"]
+        assert "command:" in data["error"]
 
 
 class TestAPIResponseModels:
