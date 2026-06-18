@@ -5,7 +5,9 @@ Proporciona endpoint asincronos para transcripción de audio bass y generación 
 """
 
 import asyncio
+import sys
 import tempfile
+import traceback
 from pathlib import Path
 from typing import Optional
 
@@ -21,6 +23,31 @@ class TranscribeResponse(BaseModel):
     musicxml_path: Optional[str] = None
     tab: Optional[str] = None
     error: Optional[str] = None
+
+
+def _decode_subprocess_output(output: Optional[bytes]) -> str:
+    """Decodifica stdout/stderr de subprocess con fallback seguro."""
+    if not output:
+        return ""
+    return output.decode("utf-8", errors="replace").strip()
+
+
+def _join_error_sections(*sections: str) -> str:
+    """Concatena secciones de error omitiendo valores vacíos."""
+    return "\n\n".join(section for section in sections if section)
+
+
+def _extract_ascii_tab(stdout_text: str) -> str:
+    """Extrae el bloque de ASCII tab del stdout del CLI cuando existe."""
+    marker = "[ASCII TAB OUTPUT]"
+    if marker not in stdout_text:
+        return stdout_text
+
+    _, _, tail = stdout_text.partition(marker)
+    tail = tail.strip()
+    if "[+]" in tail:
+        tail = tail.split("[+]", 1)[0].strip()
+    return tail
 
 
 def create_app() -> FastAPI:
@@ -76,6 +103,10 @@ def create_app() -> FastAPI:
         temp_dir = None
         temp_audio_path = None
         output_musicxml_path = None
+        stdout = b""
+        stderr = b""
+        cmd: list[str] = []
+        process = None
         
         try:
             # Crear directorio temporal
@@ -88,14 +119,16 @@ def create_app() -> FastAPI:
             temp_audio_path.write_bytes(content)
             
             # Preparar rutas de salida
-            output_musicxml_path = temp_dir_path / "output.musicxml"
-            output_tab_path = temp_dir_path / "output.txt"
+            output_musicxml_path = temp_dir_path / "bass_tab.musicxml"
             
             # Ejecutar CLI de forma asincronada usando asyncio.create_subprocess_exec
             cmd = [
-                "punkito-tabs",
-                "--audio", str(temp_audio_path),
-                "--output-xml", str(output_musicxml_path),
+                sys.executable,
+                "-m",
+                "punkito_tabs_oracle.cli",
+                str(temp_audio_path),
+                "--output-dir",
+                str(temp_dir_path),
             ]
             
             process = await asyncio.create_subprocess_exec(
@@ -112,30 +145,39 @@ def create_app() -> FastAPI:
                 return_code = process.returncode
             except asyncio.TimeoutError:
                 process.kill()
-                raise HTTPException(
-                    status_code=504,
-                    detail="Transcription timeout after 5 minutes"
+                stdout, stderr = await process.communicate()
+                raise TimeoutError(
+                    "Transcription timeout after 5 minutes"
                 )
+
+            stdout_text = _decode_subprocess_output(stdout)
+            stderr_text = _decode_subprocess_output(stderr)
             
             # Verificar si el CLI se ejecutó exitosamente
             if return_code != 0:
-                error_msg = stderr.decode("utf-8", errors="replace") if stderr else "Unknown error"
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"CLI execution failed: {error_msg}"
+                return TranscribeResponse(
+                    status="error",
+                    message="CLI execution failed",
+                    error=_join_error_sections(
+                        f"exit_code: {return_code}",
+                        f"stderr:\n{stderr_text}" if stderr_text else "",
+                        f"stdout:\n{stdout_text}" if stdout_text else "",
+                    ),
                 )
             
             # Verificar que el MusicXML se generó
             if not output_musicxml_path.exists():
-                raise HTTPException(
-                    status_code=500,
-                    detail="MusicXML output file was not generated"
+                return TranscribeResponse(
+                    status="error",
+                    message="Transcription failed",
+                    error=_join_error_sections(
+                        "MusicXML output file was not generated",
+                        f"stdout:\n{stdout_text}" if stdout_text else "",
+                        f"stderr:\n{stderr_text}" if stderr_text else "",
+                    ),
                 )
             
-            # Intentar leer el tab ASCII (puede no existir)
-            tab_content = ""
-            if output_tab_path.exists():
-                tab_content = output_tab_path.read_text(encoding="utf-8")
+            tab_content = _extract_ascii_tab(stdout_text)
             
             return TranscribeResponse(
                 status="success",
@@ -146,11 +188,18 @@ def create_app() -> FastAPI:
         
         except HTTPException:
             raise
-        except Exception as e:
+        except Exception:
+            stderr_text = _decode_subprocess_output(stderr)
+            stdout_text = _decode_subprocess_output(stdout)
             return TranscribeResponse(
                 status="error",
                 message="Transcription failed",
-                error=str(e),
+                error=_join_error_sections(
+                    traceback.format_exc().strip(),
+                    f"stderr:\n{stderr_text}" if stderr_text else "",
+                    f"stdout:\n{stdout_text}" if stdout_text else "",
+                    f"command: {' '.join(cmd)}" if cmd else "",
+                ),
             )
         finally:
             # Limpiar archivo temporal (opcionalmente, mantenerlo para debugging)
