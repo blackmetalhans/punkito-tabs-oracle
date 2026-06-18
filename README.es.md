@@ -51,7 +51,7 @@ punkito-tabs-oracle/
 ## 🚀 Instalación y Configuración
 
 ### Requisitos
-- **Python 3.9** o **3.10**
+- **Python 3.10** (requerido para compatibilidad de dependencias)
 - `ffmpeg` disponible en el PATH del sistema
 
 ### Instalar
