@@ -2,7 +2,7 @@
 
 > **Sistema de aislamiento de bajo y transcripción de tablaturas impulsado por IA** — Convierte audio polifónico en tablaturas ejecutables para bajo.
 
-⚠️ **Estado del Proyecto:** Desarrollo Activo (Pipeline Base Implementado)
+⚠️ **Estado del Proyecto:** Fase de Integración Alfa (ML, DSP y Ruteo por Programación Dinámica implementados y pasando pruebas).
 
 ## 🎯 Qué hace este proyecto
 
@@ -96,9 +96,10 @@ pip install -e .[dev]
 
 ## 📊 Pruebas
 
-Ejecutar:
+Para evitar errores de importación, no modifiques el PYTHONPATH. Asegúrate de instalar el paquete en modo editable:
 
 ```bash
+pip install -e .[dev]
 pytest -v
 ```
 
