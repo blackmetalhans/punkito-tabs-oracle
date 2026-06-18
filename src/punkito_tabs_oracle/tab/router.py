@@ -186,6 +186,7 @@ class FretboardRouter:
         scale_degrees: Optional[np.ndarray] = None,
         w_scale_penalty: Optional[float] = None,
         w_octave_discount: Optional[float] = None,
+        w_fourth_fifth_discount: Optional[float] = 0.4,
     ):
         settings = load_settings(settings_path)
         instrument = settings.get("instrument", {})
@@ -235,6 +236,11 @@ class FretboardRouter:
         )
         self.w_octave_discount = (
             float(w_octave_discount) if w_octave_discount is not None else 0.5
+        )
+        self.w_fourth_fifth_discount = (
+            float(w_fourth_fifth_discount)
+            if w_fourth_fifth_discount is not None
+            else 0.4
         )
 
     def _quantize_duration(self, duration_in_beats: float) -> float:
@@ -357,6 +363,13 @@ class FretboardRouter:
         # Descuenta fuertemente la distancia de fret
         if midi_u is not None and midi_v is not None:
             delta_midi = midi_v - midi_u
+
+            # Perfect 4th / Perfect 5th Ergonomic Rule
+            # Saltos de 5 o 7 semitonos favorecen cruce vertical de cuerda.
+            # Se descuenta el componente horizontal (fret distance).
+            if abs(delta_midi) in (5, 7):
+                cost -= self.w1 * fret_distance * self.w_fourth_fifth_discount
+
             if abs(delta_midi) == 12:
                 # Descuenta fret distance por factor w_octave_discount
                 cost -= self.w1 * fret_distance * (1.0 - self.w_octave_discount)
