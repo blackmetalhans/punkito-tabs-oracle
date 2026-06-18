@@ -3,9 +3,9 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Optional, Sequence, Tuple, Union
+from typing import Mapping, Optional, Sequence, Tuple, Union, List
 
-from music21 import articulations, clef, duration, instrument, meter, note, pitch, stream, tempo
+from music21 import articulations, clef, duration, instrument, meter, note, pitch, stream, tempo, spanner
 
 from punkito_tabs_oracle.settings import load_settings
 
@@ -23,6 +23,7 @@ class ExportedRouteItem:
     string_index: Optional[int]
     fret_number: Optional[int]
     duration_in_beats: float
+    articulation_type: str = "normal"  # 'normal' | 'dead' | 'legato'
 
 
 class MusicXMLExporter:
@@ -57,10 +58,12 @@ class MusicXMLExporter:
             string_index = item.get("string_index")
             fret_number = item.get("fret_number")
             duration_in_beats = item.get("duration_in_beats")
+            articulation_type = item.get("articulation_type", "normal")
         else:
-            if len(item) != 4:
-                raise ValueError("Route tuples must contain exactly 4 elements.")
-            midi_pitch, string_index, fret_number, duration_in_beats = item
+            if len(item) < 4:
+                raise ValueError("Route tuples must contain at least 4 elements.")
+            midi_pitch, string_index, fret_number, duration_in_beats = item[:4]
+            articulation_type = item[4] if len(item) > 4 else "normal"
 
         if duration_in_beats is None:
             raise ValueError("duration_in_beats is required for every route item.")
@@ -70,6 +73,7 @@ class MusicXMLExporter:
             string_index=None if string_index is None else int(string_index),
             fret_number=None if fret_number is None else int(fret_number),
             duration_in_beats=float(duration_in_beats),
+            articulation_type=str(articulation_type) if articulation_type else "normal",
         )
 
     @staticmethod
@@ -120,15 +124,25 @@ class MusicXMLExporter:
         return staff_details
 
     def build_part(self) -> stream.Part:
+        """Builds a Part with proper articulation handling (dead notes, slurs)."""
         part = stream.Part()
         part.append(instrument.ElectricBass())
         part.insert(0, meter.TimeSignature("4/4"))
         part.insert(0, tempo.MetronomeMark(number=self.tempo_bpm))
         part.insert(0, clef.BassClef())
 
+        # Track legato sequences for slur rendering
+        legato_sequence: List[note.Note] = []
+
         for item in self.route_items:
             ql = self._to_quarter_length(item.duration_in_beats)
             if item.midi_pitch is None or item.string_index is None or item.fret_number is None:
+                # Flush any pending legato sequence
+                if legato_sequence and len(legato_sequence) > 1:
+                    slur = spanner.Slur(legato_sequence)
+                    part.append(slur)
+                legato_sequence = []
+
                 rest = note.Rest()
                 rest.duration = duration.Duration(ql)
                 part.append(rest)
@@ -137,13 +151,33 @@ class MusicXMLExporter:
             n = note.Note()
             n.pitch.midi = int(item.midi_pitch)
             n.duration = duration.Duration(ql)
-            # Convert internal router string index (1-based) to physical music21 string number
+
+            # Apply articulation-specific properties
+            if item.articulation_type == "dead":
+                n.notehead = "x"
+            elif item.articulation_type == "legato":
+                legato_sequence.append(n)
+
+            # Always add string and fret metadata
             internal_idx = int(item.string_index)
             physical_string = self._internal_to_physical_string(internal_idx)
             fret_number = int(item.fret_number)
             n.articulations.append(articulations.StringIndication(physical_string))
             n.articulations.append(articulations.FretIndication(fret_number))
+
             part.append(n)
+
+            # If not legato, flush the legato sequence
+            if item.articulation_type != "legato":
+                if legato_sequence and len(legato_sequence) > 1:
+                    slur = spanner.Slur(legato_sequence)
+                    part.append(slur)
+                legato_sequence = []
+
+        # Final flush of pending legato
+        if legato_sequence and len(legato_sequence) > 1:
+            slur = spanner.Slur(legato_sequence)
+            part.append(slur)
 
         return part
 

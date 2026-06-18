@@ -2,9 +2,9 @@
 
 **Language / Idioma:** 🇺🇸 English | [🇪🇸 Leer en Español](./README.es.md)
 
-> **AI-powered bass isolation and tablature transcription system** — Convert polyphonic audio into playable bass guitar tabs.
+> **AI-powered bass isolation and tablature transcription system** — Convert polyphonic audio into playable bass guitar tabs with advanced articulation detection.
 
-✅ **Project Status:** Functional MVP — ML, DSP, routing, and MusicXML export integrated and passing tests.
+✅ **Project Status:** Milestone 1 (Advanced Articulations) — ML, DSP, routing, MusicXML export, ghost notes, and legato detection integrated.
 
 Punkito Tabs Oracle is designed as a deterministic audio-to-tab workflow: each stage has a specific responsibility, and each output can be inspected independently. This makes the system practical both for iterative DSP development and for downstream notation workflows that need reproducible physical fingering.
 
@@ -14,10 +14,11 @@ Punkito Tabs Oracle is an audio processing pipeline that:
 
 1. **Isolates the bass stem** from polyphonic audio using Spleeter.
 2. **Detects fundamental pitch (f0)** with `librosa.pyin` and cubic interpolation for low-confidence frames.
-3. **Quantizes pitches by beat** to improve readability.
-4. **Maps notes to fretboard positions** using dynamic-programming routing.
-5. **Generates ASCII tablature** for 4-string bass.
-6. **Exports MusicXML** with physical string/fret metadata compatible with MuseScore, Guitar Pro, AlphaTab, and Songsterr-like rendering engines.
+3. **Detects articulations** (normal notes, ghost notes, legato/slurs) using onset detection and pitch contour analysis.
+4. **Quantizes pitches by beat** to improve readability.
+5. **Maps notes to fretboard positions** using dynamic-programming routing.
+6. **Generates ASCII tablature** for 4-string bass.
+7. **Exports MusicXML** with physical string/fret metadata, dead note symbols ('x'), and legato slurs.
 
 ## 🏗️ Implemented Architecture
 
@@ -26,10 +27,10 @@ flowchart TD
     A[Input audio] --> B[ML: BassSeparator - Spleeter 4 stems]
     B --> C[Isolated bass.wav]
     C --> D[DSP: PitchTracker - pYIN + cubic interpolation + RMS silence filter]
-    D --> E[Beat-quantized f0 pulses]
-    E --> F[Tab: FretboardRouter - DP cost optimization]
+    D --> E["Beat-quantized f0 pulses<br/>with articulation types"]
+    E --> F[Tab: FretboardRouter - DP cost optimization + Viterbi path tracking]
     F --> G[ASCII tab output]
-    F --> H[MusicXMLExporter - notation+tab export with technical metadata]
+    F --> H[MusicXMLExporter - notation + dead note symbols + legato slurs]
 ```
 
 ## 📂 Project Structure
@@ -84,36 +85,49 @@ The CLI now emits two complementary tab artifacts from the same routed sequence:
 - Exports isolated bass stem to `./stems_output/<audio_name>/bass.wav`.
 - Includes dependency and output validation.
 
-### ✅ DSP Layer (`dsp/pitch.py`)
+### ✅ DSP Layer (`dsp/pitch.py`) — Milestone 1: Articulation Detection
 - pYIN-based f0 estimation in 30–400 Hz.
 - Cubic interpolation for low-confidence / unvoiced frames.
 - RMS-based silence masking.
+- **Ghost Note (Dead Note) Detection**: `librosa.onset_detect` + `spectral_flatness` to identify percussive hits with weak voicing.
+- **Legato/Slur Detection**: Pitch contour derivative (via `numpy.gradient`) to identify smooth pitch transitions without sharp onsets.
 - Beat tracking + median f0 quantization per beat.
+- Returns tuples `(f0_value, articulation_type)` where type ∈ {'normal', 'dead', 'legato'}.
 
-### ✅ TAB Layer (`tab/router.py`)
+### ✅ TAB Layer (`tab/router.py`) — Milestone 1: Articulation-Aware Routing
 - Converts Hz → MIDI.
+- **Extended State Dataclass**: `State(string, fret, articulation_type)` carries articulation metadata through Viterbi path.
 - Computes ergonomic state path (string/fret) with dynamic programming.
 - Loads router and DSP tunables from `config/settings.toml`.
 - Handles rests.
 - Renders 4-line ASCII tablature with bar separators every 4 beats.
-- Produces structured route events (`midi_pitch`, `string_index`, `fret_number`, `duration_in_beats`) for MusicXML export.
+- Produces structured route events with `articulation_type` field for MusicXML export.
 
-### ✅ MusicXML Layer (`tab/exporter.py`)
+### ✅ MusicXML Layer (`tab/exporter.py`) — Milestone 1: Articulation Symbols & Slurs
 - Builds a `music21` Electric Bass part with Bass Clef.
 - Encodes physical fingering into `<technical>` nodes via `StringIndication` and `FretIndication`.
+- **Dead Note Rendering**: Sets `notehead = 'x'` for ghost notes in MusicXML.
+- **Legato/Slur Rendering**: Dynamically creates `music21.spanner.Slur()` objects for consecutive legato notes.
 - Preserves rests and beat durations in exported notation.
 - Compatible with MuseScore, Guitar Pro, AlphaTab, and Songsterr-style rendering pipelines.
 
-Because the exporter carries the exact DP-selected string/fret data, external notation software can reproduce the intended fingering instead of re-guessing positions from pitch only.
+## 🔄 Roadmap
 
-## 🔄 Pending / In Progress
+### ✅ Completed (Milestone 1)
+- [x] Ghost note detection using onset + spectral flatness
+- [x] Legato detection using pitch derivatives
+- [x] Articulation metadata through Viterbi routing
+- [x] Dead note symbols in MusicXML (notehead='x')
+- [x] Legato slur rendering in music21
 
-- [x] Implement pitch tracking module.
-- [x] Implement bass stem separation wrapper.
-- [x] Implement fretboard routing and tab rendering.
-- [ ] Add end-to-end integration tests for full CLI pipeline.
-- [x] Integrate runtime tunables from `config/settings.toml`.
-- [ ] Add batch mode and GUI.
+### 📋 Future (Milestone 2+)
+- [ ] Polyphonic chord detection and voicing optimization
+- [ ] Slide detection and rendering
+- [ ] Bend detection and cent-level annotation
+- [ ] Harmonics (natural, artificial, pinch)
+- [ ] End-to-end integration tests for full CLI pipeline
+- [ ] Batch mode and GUI
+- [ ] Performance optimization for longer tracks
 
 ## 📊 Testing
 To avoid import errors, do not mutate PYTHONPATH. Ensure the package is installed in editable mode first:
@@ -165,4 +179,4 @@ This will generate the usual output under `stems_output/<input_name>/` and write
 
 ---
 
-**Last Updated:** June 2026
+**Last Updated:** June 2026 — Milestone 1 (Advanced Articulations) complete

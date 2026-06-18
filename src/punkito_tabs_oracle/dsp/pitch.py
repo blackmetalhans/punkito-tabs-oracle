@@ -6,11 +6,13 @@ Detector de tono (Pitch Tracker) usando librosa.pyin.
 - Umbral de silencio por RMS normalizado: 0.05 -> forzar f0=0.0
 - Interpolación cúbica para frames no confiables/no voiceados
 - Beat tracking y cuantización temporal para legibilidad musical
+- Detección de ghost notes (dead notes) usando onset_detect + spectral_flatness
+- Detección de legato usando derivada de contorno de pitch
 
 Comentarios en español.
 """
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 import numpy as np
 import scipy.signal
@@ -83,6 +85,79 @@ class PitchTracker:
             {0.25, 1.0 / 3.0, 0.5, 2.0 / 3.0, 0.75, 1.0, 1.25, 4.0 / 3.0, 1.5, 5.0 / 3.0, 1.75, 2.0}
         )
         return min(candidates, key=lambda value: abs(value - duration_in_beats))
+
+    def _detect_ghost_notes(
+        self,
+        y: np.ndarray,
+        f0: np.ndarray,
+        voiced_prob: np.ndarray,
+        beat_frames: np.ndarray,
+    ) -> np.ndarray:
+        """Detecta ghost notes (dead notes) usando onset_detect y spectral_flatness.
+
+        Retorna un array booleano de mismo largo que f0, True donde hay ghost note.
+        """
+        onsets = librosa.onset.onset_detect(
+            y=y,
+            sr=self.sr,
+            hop_length=self.hop_length,
+            backtrack=True,
+        )
+
+        spectral_flatness = librosa.feature.spectral_flatness(y=y, hop_length=self.hop_length)[0]
+        spectral_flatness = np.asarray(spectral_flatness, dtype=float)
+
+        ghost_notes = np.zeros(len(f0), dtype=bool)
+
+        for onset_frame in onsets:
+            # Si hay onset pero baja voicedness o alta spectral_flatness -> ghost note
+            onset_idx = int(np.clip(onset_frame, 0, len(f0) - 1))
+            is_weak_voiced = (
+                voiced_prob[onset_idx] < self.voiced_confidence_threshold
+                if onset_idx < len(voiced_prob)
+                else True
+            )
+            is_percussive = (
+                spectral_flatness[onset_idx] > 0.5
+                if onset_idx < len(spectral_flatness)
+                else False
+            )
+
+            if is_weak_voiced or is_percussive:
+                ghost_notes[onset_idx] = True
+
+        return ghost_notes
+
+    def _detect_legato(
+        self,
+        f0: np.ndarray,
+        voiced_prob: np.ndarray,
+        onsets: np.ndarray,
+    ) -> np.ndarray:
+        """Detecta legato (slurs) usando derivada del contorno de pitch.
+
+        Retorna un array booleano de mismo largo que f0, True donde hay transición legato.
+        """
+        legato_mask = np.zeros(len(f0), dtype=bool)
+
+        # Calcular derivada de f0 (cambio de pitch por frame)
+        f0_valid = f0.copy()
+        f0_valid[f0_valid <= 0.0] = np.nan
+        pitch_derivative = np.gradient(f0_valid)
+
+        onset_set = set(int(np.clip(o, 0, len(f0) - 1)) for o in onsets)
+
+        for i in range(1, len(f0)):
+            prev_voiced = f0[i - 1] > 0.0 and voiced_prob[i - 1] >= self.voiced_confidence_threshold
+            curr_voiced = f0[i] > 0.0 and voiced_prob[i] >= self.voiced_confidence_threshold
+
+            # Legato si ambos frames tienen pitch, pero NO hay onset sharp
+            if prev_voiced and curr_voiced and i not in onset_set:
+                # Verificar que hay cambio de pitch suave (no salto)
+                if not np.isnan(pitch_derivative[i]):
+                    legato_mask[i] = True
+
+        return legato_mask
 
     def _interpolate_low_confidence(self, f0: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
         """Interpola huecos internos de f0 usando interpolación cúbica."""
@@ -162,11 +237,15 @@ class PitchTracker:
 
         return f0
 
-    def obtener_f0_por_pulso(self, ruta_bajo: Path) -> Tuple[np.ndarray, float]:
-        """Estima f0, detecta tempo, y cuantiza por pulsos/beats.
+    def obtener_f0_por_pulso(
+        self, ruta_bajo: Path
+    ) -> Tuple[List[Tuple[float, str]], float]:
+        """Estima f0, detecta tempo, y cuantiza por pulsos/beats con articulation.
 
         Retorna:
-        - f0_pulsos: array con mediana de f0 por beat (0.0 para silencio/rest)
+        - f0_pulsos: lista de tuplas (f0_valor, articulation_type) donde:
+            - f0_valor: mediana de f0 por beat (0.0 para silencio/rest)
+            - articulation_type: 'normal' | 'dead' | 'legato'
         - bpm: tempo detectado en pulsos por minuto
         """
         # 1. Estimar f0 crudo
@@ -174,7 +253,7 @@ class PitchTracker:
         f0_raw = self.estimar_f0(ruta_bajo)
 
         if len(f0_raw) == 0:
-            return np.array([], dtype=float), 120.0
+            return [], 120.0
 
         # 2. Detectar tempo
         tempo = librosa.beat.tempo(y=y, sr=self.sr)
@@ -183,7 +262,6 @@ class PitchTracker:
         # 3. Detectar beats o usar fallback
         _, beat_frames = librosa.beat.beat_track(y=y, sr=self.sr)
         if len(beat_frames) == 0:
-            # Fallback: segmentar en N beats según BPM estimado
             frames_per_beat = int((self.sr / self.hop_length) * (60.0 / bpm))
             frames_per_beat = max(1, frames_per_beat)
             beat_frames = np.arange(0, len(f0_raw), frames_per_beat)
@@ -192,23 +270,58 @@ class PitchTracker:
         else:
             beat_frames = np.unique(np.concatenate([[0], beat_frames, [len(f0_raw)]]))
 
-        # 4. Cuantizar f0 por intervalos de beat
-        f0_pulsos = []
+        # 4. Detectar ghost notes y legato
+        _, _, voiced_prob = librosa.pyin(
+            y,
+            fmin=self.fmin,
+            fmax=self.fmax,
+            sr=self.sr,
+            frame_length=self.frame_length,
+            hop_length=self.hop_length,
+        )
+        voiced_prob = np.asarray(voiced_prob, dtype=float)
+
+        onsets = librosa.onset.onset_detect(
+            y=y,
+            sr=self.sr,
+            hop_length=self.hop_length,
+            backtrack=True,
+        )
+
+        ghost_notes = self._detect_ghost_notes(y, f0_raw, voiced_prob, beat_frames)
+        legato_mask = self._detect_legato(f0_raw, voiced_prob, onsets)
+
+        # 5. Cuantizar f0 por intervalos de beat con articulation
+        f0_pulsos: List[Tuple[float, str]] = []
         for i in range(len(beat_frames) - 1):
             start_frame = int(beat_frames[i])
             end_frame = int(beat_frames[i + 1])
-            # Asegurar límites válidos
             start_frame = max(0, min(start_frame, len(f0_raw) - 1))
             end_frame = max(start_frame + 1, min(end_frame, len(f0_raw)))
 
-            # Extraer frames de f0 en este intervalo de beat
             f0_interval = f0_raw[start_frame:end_frame]
-            # Contar voiceados
             voiced = f0_interval[f0_interval > 0]
-            # Si > 50% son voiced, usar mediana; si no, rest (0.0)
-            if len(voiced) > 0 and len(voiced) > len(f0_interval) * 0.5:
-                f0_pulsos.append(float(np.median(voiced)))
-            else:
-                f0_pulsos.append(0.0)
 
-        return np.array(f0_pulsos, dtype=float), bpm
+            articulation_type = "normal"
+            f0_value = 0.0
+
+            if len(voiced) > 0 and len(voiced) > len(f0_interval) * 0.5:
+                f0_value = float(np.median(voiced))
+
+                # Verificar si es ghost note
+                ghost_count = np.sum(ghost_notes[start_frame:end_frame])
+                if ghost_count > 0:
+                    articulation_type = "dead"
+                # Verificar si hay legato en el intervalo
+                elif np.sum(legato_mask[start_frame:end_frame]) > 0:
+                    articulation_type = "legato"
+
+            f0_pulsos.append((f0_value, articulation_type))
+
+        return f0_pulsos, bpm
+
+    def obtener_f0_por_pulso_legacy(self, ruta_bajo: Path) -> Tuple[np.ndarray, float]:
+        """Versión legacy que devuelve solo f0 sin articulation para compatibilidad."""
+        f0_pulsos_with_articulation, bpm = self.obtener_f0_por_pulso(ruta_bajo)
+        f0_values = np.array([val for val, _ in f0_pulsos_with_articulation], dtype=float)
+        return f0_values, bpm

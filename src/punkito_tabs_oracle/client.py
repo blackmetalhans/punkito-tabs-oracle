@@ -40,17 +40,26 @@ def run_pipeline(
     separator = BassSeparator(output_dir=output_dir, locales=locales)
     bass_stem = separator.aislar(audio_path)
 
-    # 2. DSP pitch tracking
+    # 2. DSP pitch tracking (now returns tuples with articulation)
     tracker = PitchTracker(settings_path=Path(settings_path) if settings_path else None)
-    f0_pulsos, bpm = tracker.obtener_f0_por_pulso(bass_stem)
+    f0_pulsos_with_articulation, bpm = tracker.obtener_f0_por_pulso(bass_stem)
 
-    # 3. Routing
+    # 3. Routing (now passes articulation through the Viterbi path)
     router = FretboardRouter(settings_path=Path(settings_path) if settings_path else None)
-    midi_seq = router.f0_to_midi_sequence(list(f0_pulsos))
-    states, ascii_tab = router.route_from_f0(list(f0_pulsos))
+    states, ascii_tab = router.route_from_f0(f0_pulsos_with_articulation)
+
+    # Extract MIDI sequence from f0 values for route building
+    midi_seq = []
+    for f0_val, _ in f0_pulsos_with_articulation:
+        if f0_val is None or f0_val == 0.0:
+            midi_seq.append(None)
+        else:
+            import librosa
+            midi_seq.append(int(round(librosa.hz_to_midi(float(f0_val)))))
+
     route_events = router.build_musicxml_route(midi_sequence=midi_seq, states=states)
 
-    # 4. Export
+    # 4. Export (now handles articulation metadata in notes)
     musicxml_path = Path(bass_stem).parent / "bass_tab.musicxml"
     exporter = MusicXMLExporter(route_events, tempo_bpm=bpm, settings_path=Path(settings_path) if settings_path else None)
     exported = exporter.write(musicxml_path)

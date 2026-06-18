@@ -22,6 +22,7 @@ from punkito_tabs_oracle.settings import load_settings
 class State:
     string: Optional[int]
     fret: int
+    articulation_type: str = "normal"  # 'normal' | 'dead' | 'legato'
 
 
 class FretboardRouter:
@@ -87,17 +88,19 @@ class FretboardRouter:
             raise ValueError("string_index out of range for configured tuning")
         return pitch_module.Pitch(midi=int(self.tuning[string_index])).step
 
-    def _midi_candidates(self, midi: Optional[int]) -> List[State]:
+    def _midi_candidates(
+        self, midi: Optional[int], articulation_type: str = "normal"
+    ) -> List[State]:
         """Devuelve todos los (string,fret) válidos para un MIDI dado.
         Si midi es None, devuelve sólo el estado de descanso.
         """
         if midi is None:
-            return [State(None, -1)]
+            return [State(None, -1, articulation_type)]
         candidates: List[State] = []
         for s in range(1, self.strings + 1):
             fret = midi - self.tuning[s]
             if 0 <= fret <= self.max_fret:
-                candidates.append(State(s, int(fret)))
+                candidates.append(State(s, int(fret), articulation_type))
         if not candidates:
             # No hay representación física -> rest
             return [State(None, -1)]
@@ -114,35 +117,44 @@ class FretboardRouter:
         cost += self.w3 * indicator
         return cost
 
-    def route_from_midi(self, midi_sequence: List[Optional[int]]) -> Tuple[List[State], str]:
+    def route_from_midi(
+        self, midi_sequence: List[Optional[int]], articulation_sequence: Optional[List[str]] = None
+    ) -> Tuple[List[State], str]:
         """Calcula la ruta óptima sobre una secuencia de valores MIDI (o None para silencio).
+
+        Args:
+            midi_sequence: List of MIDI pitches or None for rests
+            articulation_sequence: Optional list of articulation types ('normal'|'dead'|'legato')
 
         Retorna (states, tab_ascii).
         """
-        T = len(midi_sequence)
-        # Estado inicial: en t=-1 no hay estado; para t=0 inicializamos costos a 0
-        prev_costs = {}
-        prev_ptrs = []  # lista de dicts para backpointers
+        if articulation_sequence is None:
+            articulation_sequence = ["normal"] * len(midi_sequence)
 
-        # Para t=0..T-1
+        if len(articulation_sequence) != len(midi_sequence):
+            raise ValueError("articulation_sequence must match midi_sequence length")
+
+        T = len(midi_sequence)
+        prev_costs = {}
+        prev_ptrs = []
+
         for t in range(T):
             midi = midi_sequence[t]
+            articulation = articulation_sequence[t]
+
             if midi is None or midi == 0:
-                # Treat zero or None as rest
-                candidates = [State(None, -1)]
+                candidates = [State(None, -1, articulation)]
             else:
-                candidates = self._midi_candidates(midi)
+                candidates = self._midi_candidates(midi, articulation)
 
             curr_costs = {}
             curr_ptr = {}
 
             if t == 0:
-                # Inicializar: coste 0 para cada candidato
                 for v in candidates:
                     curr_costs[v] = 0.0
                     curr_ptr[v] = None
             else:
-                # Para cada candidato v buscar mejor previo u
                 for v in candidates:
                     best_cost = float("inf")
                     best_prev = None
@@ -152,7 +164,6 @@ class FretboardRouter:
                             best_cost = c
                             best_prev = u
                         elif c == best_cost:
-                            # Romper empates favoreciendo menor traste (más cercano al nut)
                             if best_prev is not None and v.fret >= 0 and best_prev.fret >= 0:
                                 if v.fret < best_prev.fret:
                                     best_prev = u
@@ -162,44 +173,59 @@ class FretboardRouter:
             prev_costs = curr_costs
             prev_ptrs.append(curr_ptr)
 
-        # Backtrack: elegir estado final de menor coste
         if not prev_costs:
             return ([], "")
         end_state = min(prev_costs.items(), key=lambda kv: kv[1])[0]
         states = [None] * T
-        # Reconstruct en reversa
         for t in range(T - 1, -1, -1):
             states[t] = end_state
             end_state = prev_ptrs[t][end_state]
             if end_state is None:
-                # reached start
                 pass
 
-        # Render ASCII tab
         tab = self._render_tab(states, midi_sequence)
         return (states, tab)
 
-    def route_from_f0(self, f0_array: List[float]) -> Tuple[List[State], str]:
-        """Convierte f0 (Hz) a MIDI y ejecuta el ruteo.
+    def route_from_f0(
+        self, f0_with_articulation: List[Tuple[float, str]]
+    ) -> Tuple[List[State], str]:
+        """Convierte f0 con articulation a MIDI y ejecuta el ruteo.
 
-        - f0==0.0 se considera silencio/rest (None)
+        Args:
+            f0_with_articulation: List of tuples (f0_hz, articulation_type)
+
+        f0==0.0 se considera silencio/rest (None)
         """
         midi_seq = []
-        for f in f0_array:
-            if f is None or f == 0.0 or np.isnan(f):
+        articulation_seq = []
+        for f0_val, articulation in f0_with_articulation:
+            if f0_val is None or f0_val == 0.0 or np.isnan(f0_val):
                 midi_seq.append(None)
             else:
-                midi_seq.append(int(round(librosa.hz_to_midi(float(f)))))
-        return self.route_from_midi(midi_seq)
+                midi_seq.append(int(round(librosa.hz_to_midi(float(f0_val)))))
+            articulation_seq.append(articulation)
 
-    def f0_to_midi_sequence(self, f0_array: List[float]) -> List[Optional[int]]:
-        """Convierte una secuencia de f0 (Hz) a MIDI entero o None para silencios."""
-        midi_seq: List[Optional[int]] = []
-        for f in f0_array:
-            if f is None or f == 0.0 or np.isnan(f):
+        return self.route_from_midi(midi_seq, articulation_seq)
+
+    def f0_to_midi_sequence(
+        self, f0_input: list
+    ) -> list:
+        """Convierte una secuencia de f0 a MIDI entero o None para silencios.
+
+        Maneja tanto el formato legacy (floats) como el nuevo (tuples con articulation).
+        """
+        midi_seq = []
+        for item in f0_input:
+            # Handle both legacy (float) and new (tuple) formats
+            if isinstance(item, tuple):
+                f0_val = item[0]
+            else:
+                f0_val = item
+
+            if f0_val is None or f0_val == 0.0 or np.isnan(f0_val):
                 midi_seq.append(None)
             else:
-                midi_seq.append(int(round(librosa.hz_to_midi(float(f)))))
+                midi_seq.append(int(round(librosa.hz_to_midi(float(f0_val)))))
         return midi_seq
 
     def build_musicxml_route(
@@ -207,10 +233,10 @@ class FretboardRouter:
         midi_sequence: List[Optional[int]],
         states: List[State],
     ) -> List[Dict[str, object]]:
-        """Construye eventos para exportación MusicXML con duración en beats.
+        """Construye eventos para exportación MusicXML con duración en beats y articulation.
 
-        Agrupa beats consecutivos con mismo (midi, cuerda, traste) en un único evento
-        para representar sustain.
+        Agrupa beats consecutivos con mismo (midi, cuerda, traste, articulation) en un
+        único evento para representar sustain.
         """
         if len(midi_sequence) != len(states):
             raise ValueError("midi_sequence and states must have the same length.")
@@ -230,6 +256,7 @@ class FretboardRouter:
                     "string_index": None if state.string is None else int(state.string),
                     "fret_number": None if state.string is None else int(state.fret),
                     "duration_in_beats": float(duration_in_beats),
+                    "articulation_type": state.articulation_type,
                 }
             )
 
@@ -240,7 +267,7 @@ class FretboardRouter:
         for idx in range(1, len(states)):
             midi_pitch = midi_sequence[idx]
             state = states[idx]
-            if midi_pitch == current_midi and state == current_state:
+            if (midi_pitch == current_midi and state == current_state):
                 current_duration += 1.0
                 continue
             append_event(current_midi, current_state, self._quantize_duration(current_duration))
