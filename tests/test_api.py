@@ -99,8 +99,7 @@ class TestAPIEndpoints:
             
             response = client.post("/api/transcribe", files={"file": audio_file})
             
-            # May fail due to CLI not being available, but should not reject based on extension
-            assert response.status_code != 400  # Not a format validation error
+            assert response.status_code == 200
 
     def test_transcribe_response_structure(self, monkeypatch):
         """Test that transcribe response has correct structure."""

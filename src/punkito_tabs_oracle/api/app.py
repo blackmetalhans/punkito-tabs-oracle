@@ -26,19 +26,19 @@ class TranscribeResponse(BaseModel):
 
 
 def _decode_subprocess_output(output: Optional[bytes]) -> str:
-    """Decodifica stdout/stderr de subprocess con fallback seguro."""
+    """Decode subprocess stdout/stderr with a safe fallback."""
     if not output:
         return ""
     return output.decode("utf-8", errors="replace").strip()
 
 
 def _join_error_sections(*sections: str) -> str:
-    """Concatena secciones de error omitiendo valores vacíos."""
+    """Concatenate non-empty error sections."""
     return "\n\n".join(section for section in sections if section)
 
 
 def _extract_ascii_tab(stdout_text: str) -> str:
-    """Extrae el bloque de ASCII tab del stdout del CLI cuando existe."""
+    """Extract the ASCII tab block from CLI stdout when present."""
     marker = "[ASCII TAB OUTPUT]"
     if marker not in stdout_text:
         return stdout_text
