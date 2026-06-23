@@ -74,77 +74,71 @@ def create_app() -> FastAPI:
                 detail=f"Invalid audio format. Allowed: {', '.join(valid_extensions)}"
             )
         
-        temp_dir = None
-        temp_audio_path = None
-        output_musicxml_path = None
-        
         try:
-            # Crear directorio temporal
-            temp_dir = tempfile.mkdtemp(prefix="punkito_transcribe_")
-            temp_dir_path = Path(temp_dir)
-            
-            # Guardar archivo de audio en directorio temporal
-            temp_audio_path = temp_dir_path / file.filename
-            content = await file.read()
-            temp_audio_path.write_bytes(content)
-            
-            # Preparar rutas de salida
-            output_musicxml_path = temp_dir_path / "output.musicxml"
-            output_tab_path = temp_dir_path / "output.txt"
-            
-            # Ejecutar CLI de forma asincronada usando asyncio.create_subprocess_exec
-            # Firma del comando corregida: argumento posicional para el audio
-            cmd = [
-                sys.executable, "-m", "punkito_tabs_oracle.cli",
-                str(temp_audio_path),
-                "--output-dir", str(temp_dir_path)
-            ]
-            
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            
-            # Esperar a que el proceso termine (con timeout)
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=300.0
+            with tempfile.TemporaryDirectory(prefix="punkito_transcribe_") as temp_dir:
+                temp_dir_path = Path(temp_dir)
+
+                # Guardar archivo de audio en directorio temporal
+                temp_audio_path = temp_dir_path / file.filename
+                content = await file.read()
+                temp_audio_path.write_bytes(content)
+
+                # Preparar rutas de salida
+                output_musicxml_path = temp_dir_path / "output.musicxml"
+                output_tab_path = temp_dir_path / "output.txt"
+
+                # Ejecutar CLI de forma asincronada usando asyncio.create_subprocess_exec
+                cmd = [
+                    sys.executable, "-m", "punkito_tabs_oracle.cli",
+                    str(temp_audio_path),
+                    "--output-dir", str(temp_dir_path)
+                ]
+
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
                 )
-                return_code = process.returncode
-            except asyncio.TimeoutError:
-                process.kill()
-                raise HTTPException(
-                    status_code=504,
-                    detail="Transcription timeout after 5 minutes"
+
+                # Esperar a que el proceso termine (con timeout)
+                try:
+                    _, stderr = await asyncio.wait_for(
+                        process.communicate(), timeout=300.0
+                    )
+                    return_code = process.returncode
+                except asyncio.TimeoutError:
+                    process.kill()
+                    raise HTTPException(
+                        status_code=504,
+                        detail="Transcription timeout after 5 minutes"
+                    )
+
+                # Verificar si el CLI se ejecutó exitosamente
+                if return_code != 0:
+                    error_msg = stderr.decode("utf-8", errors="replace") if stderr else "Unknown error"
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"CLI execution failed: {error_msg}"
+                    )
+
+                # Verificar que el MusicXML se generó
+                if not output_musicxml_path.exists():
+                    raise HTTPException(
+                        status_code=500,
+                        detail="MusicXML output file was not generated"
+                    )
+
+                # Intentar leer el tab ASCII (puede no existir)
+                tab_content = ""
+                if output_tab_path.exists():
+                    tab_content = output_tab_path.read_text(encoding="utf-8")
+
+                return TranscribeResponse(
+                    status="success",
+                    message="Audio transcribed successfully",
+                    musicxml_path=str(output_musicxml_path),
+                    tab=tab_content,
                 )
-            
-            # Verificar si el CLI se ejecutó exitosamente
-            if return_code != 0:
-                error_msg = stderr.decode("utf-8", errors="replace") if stderr else "Unknown error"
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"CLI execution failed: {error_msg}"
-                )
-            
-            # Verificar que el MusicXML se generó
-            if not output_musicxml_path.exists():
-                raise HTTPException(
-                    status_code=500,
-                    detail="MusicXML output file was not generated"
-                )
-            
-            # Intentar leer el tab ASCII (puede no existir)
-            tab_content = ""
-            if output_tab_path.exists():
-                tab_content = output_tab_path.read_text(encoding="utf-8")
-            
-            return TranscribeResponse(
-                status="success",
-                message="Audio transcribed successfully",
-                musicxml_path=str(output_musicxml_path),
-                tab=tab_content,
-            )
         
         except HTTPException:
             raise
@@ -154,12 +148,6 @@ def create_app() -> FastAPI:
                 message="Transcription failed",
                 error=str(e),
             )
-        finally:
-            # Limpiar archivo temporal (opcionalmente, mantenerlo para debugging)
-            # if temp_dir and Path(temp_dir).exists():
-            #     shutil.rmtree(temp_dir)
-            pass
-    
     return app
 
 

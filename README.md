@@ -147,6 +147,7 @@ Current automated coverage includes:
 ## 🎓 Documentation
 
 - **[ARCHITECTURE.md](./docs/ARCHITECTURE.md)** — Current architecture and module responsibilities.
+- **[MILESTONE_1.md](./docs/MILESTONE_1.md)** — Consolidated technical summary of Milestone 1 decisions, APIs, and validation notes.
 
 ## 🔧 Installation & Quick Validation
 
