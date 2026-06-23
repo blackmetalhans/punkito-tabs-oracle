@@ -418,7 +418,7 @@ class PitchTracker:
             onsets=onsets,
         )
         for slide_start, slide_end, _, _ in slide_regions:
-            legato_mask[slide_start:slide_end + 1] = True
+            legato_mask[slide_start:min(slide_end + 1, len(legato_mask))] = True
 
         # 5. Cuantizar f0 por ventanas de beat elásticas con articulation
         f0_pulsos: List[Tuple[float, str]] = []
