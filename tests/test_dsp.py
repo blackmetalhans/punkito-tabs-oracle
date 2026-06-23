@@ -97,3 +97,61 @@ def test_pitchtracker_interpolates_low_confidence_without_yin(monkeypatch):
 
     assert yin_calls["count"] == 0
     assert np.allclose(f0, np.array([110.0, 110.0, 110.0, 110.0], dtype=float), atol=1e-3)
+
+
+def test_detect_legato_handles_nan_gaps_with_interpolation():
+    tracker = PitchTracker(sr=22050)
+    f0 = np.array([110.0, 111.0, 0.0, 0.0, 120.0, 121.0], dtype=float)
+    voiced_prob = np.ones_like(f0, dtype=float)
+    onsets = np.array([], dtype=int)
+
+    legato_mask = tracker._detect_legato(f0=f0, voiced_prob=voiced_prob, onsets=onsets)
+
+    assert legato_mask.dtype == bool
+    assert legato_mask[1]
+    assert legato_mask[5]
+
+
+def test_obtener_f0_por_pulso_integrates_detect_slides(monkeypatch):
+    tracker = PitchTracker(sr=22050)
+    f0_raw = np.array([110.0, 111.0, 112.0, 113.0], dtype=float)
+    fake_y = np.zeros(1024, dtype=float)
+
+    monkeypatch.setattr(librosa, "load", lambda _p, sr, mono: (fake_y, sr))
+    monkeypatch.setattr(tracker, "estimar_f0", lambda _p: f0_raw)
+    monkeypatch.setattr(librosa.beat, "tempo", lambda y, sr: np.array([120.0], dtype=float))
+    monkeypatch.setattr(
+        librosa.beat,
+        "beat_track",
+        lambda y, sr: (120.0, np.array([0, 2], dtype=int)),
+    )
+    monkeypatch.setattr(
+        tracker,
+        "_extract_beat_windows",
+        lambda y, beat_frames, f0: [(0, 2), (2, 4)],
+    )
+    monkeypatch.setattr(
+        librosa,
+        "pyin",
+        lambda *args, **kwargs: (
+            np.array([110.0, 111.0, 112.0, 113.0], dtype=float),
+            np.ones(4, dtype=bool),
+            np.ones(4, dtype=float),
+        ),
+    )
+    monkeypatch.setattr(
+        librosa.onset, "onset_detect", lambda **kwargs: np.array([], dtype=int)
+    )
+    monkeypatch.setattr(
+        tracker, "_detect_ghost_notes", lambda y, f0, voiced_prob, beat_frames: np.zeros(4, dtype=bool)
+    )
+    monkeypatch.setattr(
+        tracker, "_detect_legato", lambda f0, voiced_prob, onsets: np.zeros(4, dtype=bool)
+    )
+    monkeypatch.setattr(
+        tracker, "detect_slides", lambda **kwargs: [(1, 3, 45, 47)]
+    )
+
+    f0_pulsos, _ = tracker.obtener_f0_por_pulso(Path("dummy.wav"))
+
+    assert [art for _, art in f0_pulsos] == ["legato", "legato"]
