@@ -136,8 +136,7 @@ states, _ = router.route_from_f0(f0_pulsos_with_articulation)
 
 ### 5. **`pyproject.toml`**
 
-- **Changed**: `requires-python = ">=3.10,<3.11"` → `">=3.10"`
-  - (For testing on Python 3.14; revert if Python 3.10 isolation is required)
+- **Changed**: `requires-python = ">=3.10,<3.11"` → `">=3.10"` (manteniendo Python 3.10 como versión objetivo del proyecto)
 
 ### 6. **`README.md`**
 

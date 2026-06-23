@@ -32,6 +32,20 @@ class PitchTracker:
 
     Parámetros opcionales para facilitar pruebas y reutilización.
     """
+    DEFAULT_DSP_SETTINGS = {
+        "sample_rate": 22050,
+        "frame_length": 2048,
+        "hop_length": 256,
+        "fmin": 41.2,
+        "fmax": 392.0,
+        "voiced_confidence_threshold": 0.05,
+        "rms_silence_threshold": 0.05,
+        "ghost_spectral_flatness_threshold": 0.5,
+        "beat_voiced_ratio_threshold": 0.5,
+        "slide_pitch_change_threshold_hz": 1.0,
+        "slide_tolerance_hz": 1.0,
+        "slide_min_duration_frames": 3,
+    }
 
     def __init__(
         self,
@@ -46,33 +60,54 @@ class PitchTracker:
     ):
         settings = load_settings(settings_path)
         dsp = settings.get("dsp", {})
-        required = (
-            "sample_rate",
-            "frame_length",
-            "hop_length",
-            "fmin",
-            "fmax",
-            "voiced_confidence_threshold",
-            "rms_silence_threshold",
-        )
-        missing = [k for k in required if k not in dsp]
-        if missing:
-            raise KeyError(f"Missing dsp settings: {missing}")
+        defaults = self.DEFAULT_DSP_SETTINGS
 
-        self.sr = int(sr if sr is not None else dsp["sample_rate"])
-        self.frame_length = int(frame_length if frame_length is not None else dsp["frame_length"])
-        self.hop_length = int(hop_length if hop_length is not None else dsp["hop_length"])
-        self.fmin = float(fmin if fmin is not None else dsp["fmin"])
-        self.fmax = float(fmax if fmax is not None else dsp["fmax"])
+        self.sr = int(sr if sr is not None else dsp.get("sample_rate", defaults["sample_rate"]))
+        self.frame_length = int(
+            frame_length
+            if frame_length is not None
+            else dsp.get("frame_length", defaults["frame_length"])
+        )
+        self.hop_length = int(
+            hop_length
+            if hop_length is not None
+            else dsp.get("hop_length", defaults["hop_length"])
+        )
+        self.fmin = float(fmin if fmin is not None else dsp.get("fmin", defaults["fmin"]))
+        self.fmax = float(fmax if fmax is not None else dsp.get("fmax", defaults["fmax"]))
         self.voiced_confidence_threshold = float(
             voiced_confidence_threshold
             if voiced_confidence_threshold is not None
-            else dsp["voiced_confidence_threshold"]
+            else dsp.get(
+                "voiced_confidence_threshold",
+                defaults["voiced_confidence_threshold"],
+            )
         )
         self.rms_silence_threshold = float(
             rms_silence_threshold
             if rms_silence_threshold is not None
-            else dsp["rms_silence_threshold"]
+            else dsp.get("rms_silence_threshold", defaults["rms_silence_threshold"])
+        )
+        self.ghost_spectral_flatness_threshold = float(
+            dsp.get(
+                "ghost_spectral_flatness_threshold",
+                defaults["ghost_spectral_flatness_threshold"],
+            )
+        )
+        self.beat_voiced_ratio_threshold = float(
+            dsp.get("beat_voiced_ratio_threshold", defaults["beat_voiced_ratio_threshold"])
+        )
+        self.slide_pitch_change_threshold_hz = float(
+            dsp.get(
+                "slide_pitch_change_threshold_hz",
+                defaults["slide_pitch_change_threshold_hz"],
+            )
+        )
+        self.slide_tolerance_hz = float(
+            dsp.get("slide_tolerance_hz", defaults["slide_tolerance_hz"])
+        )
+        self.slide_min_duration_frames = int(
+            dsp.get("slide_min_duration_frames", defaults["slide_min_duration_frames"])
         )
         self.quantization_grid = (0.25, 1.0 / 3.0)
 
@@ -118,7 +153,7 @@ class PitchTracker:
                 else True
             )
             is_percussive = (
-                spectral_flatness[onset_idx] > 0.5
+                spectral_flatness[onset_idx] > self.ghost_spectral_flatness_threshold
                 if onset_idx < len(spectral_flatness)
                 else False
             )
@@ -139,11 +174,18 @@ class PitchTracker:
         Retorna un array booleano de mismo largo que f0, True donde hay transición legato.
         """
         legato_mask = np.zeros(len(f0), dtype=bool)
+        if len(f0) == 0:
+            return legato_mask
 
-        # Calcular derivada de f0 (cambio de pitch por frame)
-        f0_valid = f0.copy()
-        f0_valid[f0_valid <= 0.0] = np.nan
-        pitch_derivative = np.gradient(f0_valid)
+        # Calcular derivada de f0 evitando propagación de NaN mediante interpolación
+        f0_valid = np.asarray(f0, dtype=float)
+        voiced_mask = f0_valid > 0.0
+        if np.count_nonzero(voiced_mask) >= 2:
+            frame_idx = np.arange(len(f0_valid), dtype=float)
+            f0_interp = np.interp(frame_idx, frame_idx[voiced_mask], f0_valid[voiced_mask])
+            pitch_derivative = np.gradient(f0_interp)
+        else:
+            pitch_derivative = np.zeros_like(f0_valid, dtype=float)
 
         onset_set = set(int(np.clip(o, 0, len(f0) - 1)) for o in onsets)
 
@@ -154,7 +196,7 @@ class PitchTracker:
             # Legato si ambos frames tienen pitch, pero NO hay onset sharp
             if prev_voiced and curr_voiced and i not in onset_set:
                 # Verificar que hay cambio de pitch suave (no salto)
-                if not np.isnan(pitch_derivative[i]):
+                if np.isfinite(pitch_derivative[i]):
                     legato_mask[i] = True
 
         return legato_mask
@@ -302,7 +344,7 @@ class PitchTracker:
         articulation_type = "normal"
         f0_value = 0.0
 
-        if len(voiced) > 0 and len(voiced) > len(f0_interval) * 0.5:
+        if len(voiced) > 0 and len(voiced) > len(f0_interval) * self.beat_voiced_ratio_threshold:
             f0_value = float(np.median(voiced))
 
             # Verificar si es ghost note
@@ -369,6 +411,14 @@ class PitchTracker:
             y, f0_raw, voiced_prob, beat_frame_starts
         )
         legato_mask = self._detect_legato(f0_raw, voiced_prob, onsets)
+        slide_regions = self.detect_slides(
+            f0=f0_raw,
+            voiced_prob=voiced_prob,
+            min_duration_frames=self.slide_min_duration_frames,
+            onsets=onsets,
+        )
+        for slide_start, slide_end, _, _ in slide_regions:
+            legato_mask[slide_start:slide_end + 1] = True
 
         # 5. Cuantizar f0 por ventanas de beat elásticas con articulation
         f0_pulsos: List[Tuple[float, str]] = []
@@ -391,7 +441,7 @@ class PitchTracker:
         self,
         f0: np.ndarray,
         voiced_prob: np.ndarray,
-        min_duration_frames: int = 3,
+        min_duration_frames: Optional[int] = None,
         onsets: Optional[np.ndarray] = None,
     ) -> List[Tuple[int, int, int, int]]:
         """Detecta deslices (glissandos) lineales en el contorno de f0.
@@ -410,8 +460,13 @@ class PitchTracker:
             Lista de tuplas (start_frame, end_frame, start_midi, end_midi) para cada slide
         """
         slides: List[Tuple[int, int, int, int]] = []
-        
-        if len(f0) < min_duration_frames:
+        min_duration = int(
+            self.slide_min_duration_frames
+            if min_duration_frames is None
+            else min_duration_frames
+        )
+
+        if len(f0) < min_duration:
             return slides
         
         if onsets is None:
@@ -445,15 +500,15 @@ class PitchTracker:
                 
                 if ramp_direction is None:
                     # Establecer dirección en el primer cambio significativo
-                    if abs(df) > 1.0:  # Threshold para ignorar pequeñas variaciones
+                    if abs(df) > self.slide_pitch_change_threshold_hz:
                         ramp_direction = "up" if df > 0 else "down"
                         ramp_end = j
                     else:
                         ramp_end = j
-                elif ramp_direction == "up" and df >= -1.0:
+                elif ramp_direction == "up" and df >= -self.slide_tolerance_hz:
                     # Permitir pequeños retrocesos (< 1 Hz) en rampa ascendente
                     ramp_end = j
-                elif ramp_direction == "down" and df <= 1.0:
+                elif ramp_direction == "down" and df <= self.slide_tolerance_hz:
                     # Permitir pequeños avances (< 1 Hz) en rampa descendente
                     ramp_end = j
                 else:
@@ -462,7 +517,7 @@ class PitchTracker:
             
             # Si encontramos una rampa válida, registrarla
             ramp_length = ramp_end - ramp_start + 1
-            if ramp_length >= min_duration_frames and ramp_direction is not None:
+            if ramp_length >= min_duration and ramp_direction is not None:
                 # Calcular MIDI start y end
                 midi_start = int(round(librosa.hz_to_midi(float(f0[ramp_start]))))
                 midi_end = int(round(librosa.hz_to_midi(float(f0[ramp_end]))))
@@ -481,7 +536,7 @@ class PitchTracker:
         f0_segment: np.ndarray,
         voiced_segment: np.ndarray,
         direction: str,
-        tolerance_hz: float = 1.0,
+        tolerance_hz: Optional[float] = None,
     ) -> bool:
         """Verifica si un segmento de f0 forma una rampa monótona en la dirección especificada.
         
@@ -502,12 +557,13 @@ class PitchTracker:
         
         # Calcular cambios
         diffs = np.diff(valid_f0)
+        tol = self.slide_tolerance_hz if tolerance_hz is None else float(tolerance_hz)
         
         if direction == "up":
             # Permitir cambios positivos y pequeños negativos
-            return np.all(diffs >= -tolerance_hz)
+            return np.all(diffs >= -tol)
         elif direction == "down":
             # Permitir cambios negativos y pequeños positivos
-            return np.all(diffs <= tolerance_hz)
+            return np.all(diffs <= tol)
         
         return False
