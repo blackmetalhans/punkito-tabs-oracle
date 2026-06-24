@@ -223,12 +223,16 @@ class FretboardRouter:
             else 0.4
         )
 
+        # shape_offsets: quality -> interval class -> (string_delta, fret_delta)
+        # string_delta usa el convenio interno: valores negativos suben a la
+        # cuerda más aguda; fret_delta modela el desplazamiento horizontal típico.
         self.shape_offsets = {
             "major": {0: (0, 0), 4: (-1, -1), 7: (-1, 2), 11: (-1, 1)},
             "minor": {0: (0, 0), 3: (-1, 0), 7: (-1, 2), 10: (-1, 1)},
             "dim": {0: (0, 0), 3: (-1, 0), 6: (-1, 1)},
             "dominant": {0: (0, 0), 4: (-1, -1), 7: (-1, 2), 10: (-1, 1)},
         }
+        # Valores conservadores para no eclipsar las heurísticas existentes.
         self._harmonic_resolution_discount = 0.35
         self._chord_emission_discount = 0.12
 
@@ -293,6 +297,8 @@ class FretboardRouter:
         elif quality_key in {"dom", "dominant", "7", "dom7", "7th"}:
             quality = "dominant"
         else:
+            # Fallback explícito: asumimos triada mayor cuando la calidad no
+            # está reconocida para no romper el routing en etiquetas ambiguas.
             quality = "major"
 
         return root_pc, quality
@@ -444,9 +450,11 @@ class FretboardRouter:
             interval = (midi_v - root_pc) % 12
             preferred_delta = self.shape_offsets.get(quality, {}).get(interval)
             if preferred_delta is not None:
-                actual_delta = (v.string - u.string, v.fret - u.fret)
-                delta_error = abs(actual_delta[0] - preferred_delta[0]) + abs(
-                    actual_delta[1] - preferred_delta[1]
+                string_delta = v.string - u.string
+                fret_delta = v.fret - u.fret
+                preferred_string_delta, preferred_fret_delta = preferred_delta
+                delta_error = abs(string_delta - preferred_string_delta) + abs(
+                    fret_delta - preferred_fret_delta
                 )
                 shape_bonus = max(0.0, 1.0 - 0.25 * delta_error)
                 cost -= self.w1 * 0.5 * shape_bonus
@@ -473,7 +481,13 @@ class FretboardRouter:
         if chroma.size == 0:
             return ["N"] * len(beat_windows)
 
-        max_window_end = max(int(end) for _, end in beat_windows)
+        window_ends = [int(end) for _, end in beat_windows if end is not None]
+        if not window_ends:
+            return ["N"] * len(beat_windows)
+
+        max_window_end = max(window_ends, default=0)
+        # Si los límites parecen venir ya en frames, evitamos reescalarlos;
+        # si exceden la resolución del cromagrama, los interpretamos como samples.
         treat_as_frames = max_window_end <= chroma.shape[1]
 
         chord_labels: List[str] = []
@@ -510,6 +524,8 @@ class FretboardRouter:
                     for interval in intervals:
                         template[(root_idx + interval) % 12] = 1.0
                     template /= np.sum(template)
+                    # Dot product sobre perfiles normalizados: template matching
+                    # simple y estable para triadas/7ths sin coste extra de correlación.
                     score = float(np.dot(window_profile, template))
                     if score > best_score:
                         best_score = score
