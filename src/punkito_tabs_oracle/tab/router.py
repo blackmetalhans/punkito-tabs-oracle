@@ -4,11 +4,13 @@ Ruteador de trastes para bajo de N cuerdas.
 Modela el mapeo de una secuencia temporal de f0 (Hz) -> MIDI -> (String, Fret)
 como un problema de camino mínimo (programación dinámica / Viterbi-like).
 
-Implementa un topología Viterbi consciente de escala con reglas ergonómicas:
+Implementa un topología Viterbi consciente de escala y armonía local:
 - Estimación de tono usando librosa.feature.chroma_cqt
+- Estimación local de acordes por ventana rítmica
 - Penalización por notas fuera de escala (error correction contra artefactos)
 - Regla del octavo: transposciones de 12 semitonos descuentan fret distance
 - Regla del box shape: transiciones dentro de 4 trastes favorecen string changes
+- Aware routing con shapes de bajo y progresiones en el Círculo de Quintas
 
 Comentarios en español.
 """
@@ -22,6 +24,30 @@ import librosa
 from music21 import pitch as pitch_module
 
 from punkito_tabs_oracle.settings import load_settings
+
+
+NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+NOTE_TO_IDX = {note: idx for idx, note in enumerate(NOTE_NAMES)}
+CIRCLE_OF_FIFTHS_INDEX = {
+    0: 0,
+    7: 1,
+    2: 2,
+    9: 3,
+    4: 4,
+    11: 5,
+    6: 6,
+    1: 7,
+    8: 8,
+    3: 9,
+    10: 10,
+    5: 11,
+}
+CHORD_QUALITY_INTERVALS = {
+    "major": (0, 4, 7),
+    "minor": (0, 3, 7),
+    "dim": (0, 3, 6),
+    "dominant": (0, 4, 7, 10),
+}
 
 
 def estimate_key_from_chroma(
@@ -44,26 +70,21 @@ def estimate_key_from_chroma(
         - key_name: Nombre de la tonalidad (e.g., "E minor", "C major")
         - chroma_normalized: Vector de 12 dimensiones (notas C a B)
     """
-    # Extraer características cromáticas usando constant-Q transform
     chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=hop_length)
-    # Promediar sobre el tiempo
     chroma_mean = np.mean(chroma, axis=1)
     chroma_normalized = chroma_mean / (np.sum(np.abs(chroma_mean)) + 1e-9)
 
-    # Templates de escala mayor y menor (normalizados)
     major_template = np.array(
         [1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1],
-        dtype=float
+        dtype=float,
     )
     minor_template = np.array(
         [1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0],
-        dtype=float
+        dtype=float,
     )
     major_template = major_template / np.sum(major_template)
     minor_template = minor_template / np.sum(minor_template)
 
-    # Probar rotaciones para cada tono
-    note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
     best_score = -np.inf
     best_key = "C major"
 
@@ -74,11 +95,11 @@ def estimate_key_from_chroma(
 
         if major_score > best_score:
             best_score = major_score
-            best_key = f"{note_names[shift]} major"
+            best_key = f"{NOTE_NAMES[shift]} major"
 
         if minor_score > best_score:
             best_score = minor_score
-            best_key = f"{note_names[shift]} minor"
+            best_key = f"{NOTE_NAMES[shift]} minor"
 
     return best_key, chroma_normalized
 
@@ -92,33 +113,16 @@ def get_scale_degrees(key_name: str) -> np.ndarray:
     Returns:
         Array booleano de 12 elementos (C a B) indicando qué notas están en la escala
     """
-    note_to_idx = {
-        "C": 0,
-        "C#": 1,
-        "D": 2,
-        "D#": 3,
-        "E": 4,
-        "F": 5,
-        "F#": 6,
-        "G": 7,
-        "G#": 8,
-        "A": 9,
-        "A#": 10,
-        "B": 11,
-    }
-
-    # Parsear tonalidad
     parts = key_name.split()
     root_note = parts[0]
     scale_type = parts[1] if len(parts) > 1 else "major"
 
-    root_idx = note_to_idx.get(root_note, 0)
+    root_idx = NOTE_TO_IDX.get(root_note, 0)
 
-    # Templates de escala
     if scale_type.lower() == "major":
-        intervals = [0, 2, 4, 5, 7, 9, 11]  # Pasos en semitonos
-    else:  # minor
-        intervals = [0, 2, 3, 5, 7, 8, 10]  # Natural minor
+        intervals = [0, 2, 4, 5, 7, 9, 11]
+    else:
+        intervals = [0, 2, 3, 5, 7, 8, 10]
 
     scale_degrees = np.zeros(12, dtype=bool)
     for interval in intervals:
@@ -128,27 +132,12 @@ def get_scale_degrees(key_name: str) -> np.ndarray:
 
 
 def midi_to_scale_degree(midi: int) -> int:
-    """Convierte MIDI a índice de nota cromática (0-11).
-
-    Args:
-        midi: Número MIDI (0-127)
-
-    Returns:
-        Índice cromático 0-11 (C a B)
-    """
+    """Convierte MIDI a índice de nota cromática (0-11)."""
     return midi % 12
 
 
 def is_midi_in_scale(midi: int, scale_degrees: np.ndarray) -> bool:
-    """Verifica si un MIDI está en la escala detectada.
-
-    Args:
-        midi: Número MIDI
-        scale_degrees: Array booleano de notas en escala
-
-    Returns:
-        True si MIDI está en la escala
-    """
+    """Verifica si un MIDI está en la escala detectada."""
     scale_idx = midi_to_scale_degree(midi)
     return bool(scale_degrees[scale_idx])
 
@@ -163,7 +152,7 @@ class State:
 class FretboardRouter:
     """Router que calcula la secuencia de (string, fret) de coste mínimo.
 
-    Implementa topología Viterbi consciente de escala:
+    Implementa topología Viterbi consciente de escala y acorde:
     - route_from_f0: acepta array de f0 (Hz) y devuelve (states, tab_ascii)
     - route_from_midi: acepta array con valores MIDI (int) y devuelve
       (states, tab_ascii)
@@ -193,9 +182,7 @@ class FretboardRouter:
         weights = settings.get("router_weights", {})
 
         required_instrument = ("strings", "tuning_midi", "max_fret")
-        missing_instrument = [
-            k for k in required_instrument if k not in instrument
-        ]
+        missing_instrument = [k for k in required_instrument if k not in instrument]
         if missing_instrument:
             raise KeyError(f"Missing instrument settings: {missing_instrument}")
 
@@ -205,32 +192,25 @@ class FretboardRouter:
             raise KeyError(f"Missing router_weights settings: {missing_weights}")
 
         strings = int(instrument["strings"])
-
         tuning_low_to_high = [int(v) for v in instrument["tuning_midi"]]
         if len(tuning_low_to_high) != strings:
             raise ValueError(
                 "instrument.tuning_midi length must match instrument.strings"
             )
 
-        # Internamente usamos 1=aguda ... 4=grave.
         tuning_high_to_low = list(reversed(tuning_low_to_high))
         self.tuning = {idx + 1: tuning_high_to_low[idx] for idx in range(strings)}
         self.max_fret = int(instrument["max_fret"])
         self.strings = strings
 
         self.w1 = float(w_fret if w_fret is not None else weights["w_fret"])
-        self.w2 = float(
-            w_string if w_string is not None else weights["w_string"]
-        )
+        self.w2 = float(w_string if w_string is not None else weights["w_string"])
         self.w3 = float(w_open if w_open is not None else weights["w_open"])
         self.quantization_grid = (0.25, 1.0 / 3.0)
 
-        # Phase 2: Scale-aware parameters
         self.scale_degrees = (
-            scale_degrees
-            if scale_degrees is not None
-            else np.ones(12, dtype=bool)
-        )  # Default: all notes allowed
+            scale_degrees if scale_degrees is not None else np.ones(12, dtype=bool)
+        )
         self.w_scale_penalty = (
             float(w_scale_penalty) if w_scale_penalty is not None else 5.0
         )
@@ -242,6 +222,15 @@ class FretboardRouter:
             if w_fourth_fifth_discount is not None
             else 0.4
         )
+
+        self.shape_offsets = {
+            "major": {0: (0, 0), 4: (-1, -1), 7: (-1, 2), 11: (-1, 1)},
+            "minor": {0: (0, 0), 3: (-1, 0), 7: (-1, 2), 10: (-1, 1)},
+            "dim": {0: (0, 0), 3: (-1, 0), 6: (-1, 1)},
+            "dominant": {0: (0, 0), 4: (-1, -1), 7: (-1, 2), 10: (-1, 1)},
+        }
+        self._harmonic_resolution_discount = 0.35
+        self._chord_emission_discount = 0.12
 
     def _quantize_duration(self, duration_in_beats: float) -> float:
         """Snap durations to the strict micro-beat grid used by the exporter."""
@@ -272,50 +261,119 @@ class FretboardRouter:
             raise ValueError("string_index out of range for configured tuning")
         return pitch_module.Pitch(midi=int(self.tuning[string_index])).step
 
-    def _emission_cost(self, midi: Optional[int]) -> float:
-        """Calcula el coste de emisión para un MIDI (penalización por fuera de escala).
+    def _parse_chord_label(self, chord_label: Optional[str]) -> Optional[Tuple[int, str]]:
+        """Normaliza etiquetas de acordes a (pitch_class, quality)."""
+        if chord_label is None:
+            return None
 
-        Penaliza notas que caen completamente fuera del contexto diatónico detectado.
-        Actúa como capa de corrección de errores contra artefactos de pYIN.
+        label = str(chord_label).strip()
+        if not label or label.upper() in {"N", "NC", "NO CHORD", "REST", "X"}:
+            return None
 
-        Args:
-            midi: Número MIDI o None para silencio
+        if ":" in label:
+            root_text, quality_text = label.split(":", 1)
+        else:
+            parts = label.split()
+            root_text = parts[0]
+            quality_text = parts[1] if len(parts) > 1 else "major"
 
-        Returns:
-            Coste de emisión (0.0 si en escala, w_scale_penalty si fuera)
-        """
+        root_text = root_text.replace("♭", "b").replace("♯", "#")
+        try:
+            root_pc = int(pitch_module.Pitch(root_text).pitchClass)
+        except Exception:
+            root_pc = NOTE_TO_IDX.get(root_text.upper(), 0)
+
+        quality_key = quality_text.lower().strip()
+        if quality_key in {"maj", "major", "", "maj7"}:
+            quality = "major"
+        elif quality_key in {"min", "minor", "m", "-"}:
+            quality = "minor"
+        elif quality_key in {"dim", "diminished", "o", "°"}:
+            quality = "dim"
+        elif quality_key in {"dom", "dominant", "7", "dom7", "7th"}:
+            quality = "dominant"
+        else:
+            quality = "major"
+
+        return root_pc, quality
+
+    def _circle_of_fifths_distance(self, prev_pc: int, curr_pc: int) -> int:
+        """Distancia mínima en el Círculo de Quintas entre dos pitch classes."""
+        prev_idx = CIRCLE_OF_FIFTHS_INDEX[prev_pc % 12]
+        curr_idx = CIRCLE_OF_FIFTHS_INDEX[curr_pc % 12]
+        raw_distance = abs(curr_idx - prev_idx)
+        return min(raw_distance, 12 - raw_distance)
+
+    def _chord_progression_discount(
+        self,
+        previous_chord: Optional[str],
+        current_chord: Optional[str],
+    ) -> float:
+        """Calcula un descuento de coste por resolución armónica local."""
+        prev_parsed = self._parse_chord_label(previous_chord)
+        curr_parsed = self._parse_chord_label(current_chord)
+        if prev_parsed is None or curr_parsed is None:
+            return 0.0
+
+        prev_pc, _ = prev_parsed
+        curr_pc, _ = curr_parsed
+        if prev_pc == curr_pc:
+            return 0.0
+
+        circle_distance = self._circle_of_fifths_distance(prev_pc, curr_pc)
+        semitone_motion = (curr_pc - prev_pc) % 12
+        strong_resolution = circle_distance == 1 and semitone_motion in {5, 7}
+
+        if strong_resolution:
+            return self._harmonic_resolution_discount
+        if circle_distance == 2 and semitone_motion in {5, 7}:
+            return self._harmonic_resolution_discount * 0.5
+        return 0.0
+
+    def _chord_emission_bonus(self, midi: Optional[int], chord_label: Optional[str]) -> float:
+        """Pequeño descuento por caer en un tono estructural del acorde local."""
         if midi is None:
             return 0.0
 
-        if not is_midi_in_scale(midi, self.scale_degrees):
-            return self.w_scale_penalty
+        parsed = self._parse_chord_label(chord_label)
+        if parsed is None:
+            return 0.0
 
-        return 0.0
+        root_pc, quality = parsed
+        chord_intervals = CHORD_QUALITY_INTERVALS.get(quality, CHORD_QUALITY_INTERVALS["major"])
+        interval = (midi - root_pc) % 12
+        if interval not in chord_intervals:
+            return 0.0
+
+        if interval == 0:
+            return self._chord_emission_discount
+        if interval in {3, 4, 7}:
+            return self._chord_emission_discount * 0.75
+        return self._chord_emission_discount * 0.5
+
+    def _emission_cost(self, midi: Optional[int], chord_label: Optional[str] = None) -> float:
+        """Calcula el coste de emisión para un MIDI (penalización por fuera de escala)."""
+        if midi is None:
+            return 0.0
+
+        cost = 0.0
+        if not is_midi_in_scale(midi, self.scale_degrees):
+            cost += self.w_scale_penalty
+
+        cost -= self._chord_emission_bonus(midi, chord_label)
+        return cost
 
     def _midi_candidates(
         self, midi: Optional[int], articulation_type: str = "normal"
     ) -> List[State]:
-        """Devuelve todos los (string,fret) válidos para un MIDI dado.
-        Si midi es None o articulation_type es 'dead', devuelve fallback states.
-
-        Para dead notes, devuelve un estado unvoiced (None, -1) con articulation='dead'
-        para evitar colapso de trellis durante el traceback de Viterbi.
-        
-        Implementa ruteo determinista que:
-        - Calcula (string, fret) para cada cuerda posible
-        - Prioriza trastes bajos (0-7) para mayor estabilidad técnica
-        - Valida integridad matemática: midi_base_cuerda + traste == midi_detectado
-        """
+        """Devuelve todos los (string,fret) válidos para un MIDI dado."""
         if midi is None or articulation_type == "dead":
-            # Devolver estado fallback: unvoiced con la articulation especificada
             return [State(None, -1, articulation_type)]
 
         candidates: List[State] = []
-        
+
         for s in range(1, self.strings + 1):
             fret = midi - self.tuning[s]
-            
-            # Validación de integridad: el MIDI calculado debe coincidir exactamente con el detectado
             midi_calculated = self.tuning[s] + fret
             if midi_calculated != midi:
                 raise ValueError(
@@ -324,22 +382,18 @@ class FretboardRouter:
                     f"fret={fret}, calculated MIDI={midi_calculated}. "
                     f"These values must be mathematically identical."
                 )
-            
-            # Validar que el traste esté en rango
+
             if 0 <= fret <= self.max_fret:
                 candidates.append(State(s, int(fret), articulation_type))
 
-        # Priorizar trastes bajos (0-7) para mayor estabilidad
         low_fret_candidates = [c for c in candidates if c.fret <= 7]
         if low_fret_candidates:
-            # Ordenar por traste ascendente, luego por cuerda
             low_fret_candidates.sort(key=lambda c: (c.fret, c.string))
             candidates = low_fret_candidates
 
         if not candidates:
-            # No hay representación física -> fallback rest state
             return [State(None, -1, articulation_type)]
-        
+
         return candidates
 
     def _transition_cost(
@@ -348,95 +402,137 @@ class FretboardRouter:
         v: State,
         midi_u: Optional[int] = None,
         midi_v: Optional[int] = None,
+        previous_chord: Optional[str] = None,
+        current_chord: Optional[str] = None,
     ) -> float:
-        """Calcula el coste de transición entre dos estados.
-
-        Implementa:
-        - Coste base: distancia de fret y cuerda
-        - Regla del octavo: si abs(delta_midi) == 12, descuenta fret distance
-        - Regla del box shape: si ambas notas están en escala, favorece cambios de
-          cuerda sobre movimiento horizontal, descuento si dentro de 4-fret block
-        - Coste neutro para descansos/dead notes
-
-        Args:
-            u: Estado previo
-            v: Estado actual
-            midi_u: MIDI anterior (opcional, para octave/box rules)
-            midi_v: MIDI actual (opcional, para octave/box rules)
-
-        Returns:
-            Coste de transición
-        """
-        # Si alguno es descanso o dead note, coste neutro para evitar penalización
+        """Calcula el coste de transición entre dos estados."""
         if u.string is None or v.string is None:
             return 0.0
 
-        # Si la nota destino es dead, transición neutral
         if v.articulation_type == "dead":
             return 0.0
 
-        # Coste base: movimiento horizontal y vertical
         fret_distance = abs(v.fret - u.fret)
         string_distance = abs(v.string - u.string)
 
         cost = self.w1 * fret_distance + self.w2 * string_distance
-        # Recompensa por cuerda al aire: indicador devuelve -2.0 si fret==0
         indicator = -2.0 if v.fret == 0 else 0.0
         cost += self.w3 * indicator
 
-        # Phase 2: Octave Rule
-        # Si abs(delta_midi) == 12 (un octavo), es un slap/pop ergonómico
-        # Descuenta fuertemente la distancia de fret
         if midi_u is not None and midi_v is not None:
             delta_midi = midi_v - midi_u
 
-            # Perfect 4th / Perfect 5th Ergonomic Rule
-            # Saltos de 5 o 7 semitonos favorecen cruce vertical de cuerda.
-            # Se descuenta el componente horizontal (fret distance).
             if abs(delta_midi) in (5, 7):
                 cost -= self.w1 * fret_distance * self.w_fourth_fifth_discount
 
             if abs(delta_midi) == 12:
-                # Descuenta fret distance por factor w_octave_discount
                 cost -= self.w1 * fret_distance * (1.0 - self.w_octave_discount)
 
-        # Phase 2: Box Shape Rule
-        # Si ambas notas están en la escala detectada:
-        # - Favorece cambios de cuerda sobre movimiento horizontal (4-fret limit)
-        # - Descuento si nueva nota cae dentro de 4-fret block relativo a anterior
         if (
             midi_u is not None
             and midi_v is not None
             and is_midi_in_scale(midi_u, self.scale_degrees)
             and is_midi_in_scale(midi_v, self.scale_degrees)
+            and fret_distance <= 4
         ):
-            # Si el movimiento de fret es pequeño (≤4), favorece string crossing
-            if fret_distance <= 4:
-                # Descuenta el coste del movimiento horizontal
-                cost -= self.w1 * fret_distance * 0.3  # Descuento del 30%
-                # Penaliza ligeramente cruce de cuerda pero menos que horizontal
-                # (ya aplicado en w2, así que no se aplica penalización extra)
+            cost -= self.w1 * fret_distance * 0.3
 
-        return cost
+        chord_discount = self._chord_progression_discount(previous_chord, current_chord)
+        parsed_chord = self._parse_chord_label(current_chord)
+        if parsed_chord is not None and midi_v is not None:
+            root_pc, quality = parsed_chord
+            interval = (midi_v - root_pc) % 12
+            preferred_delta = self.shape_offsets.get(quality, {}).get(interval)
+            if preferred_delta is not None:
+                actual_delta = (v.string - u.string, v.fret - u.fret)
+                delta_error = abs(actual_delta[0] - preferred_delta[0]) + abs(
+                    actual_delta[1] - preferred_delta[1]
+                )
+                shape_bonus = max(0.0, 1.0 - 0.25 * delta_error)
+                cost -= self.w1 * 0.5 * shape_bonus
+
+                if chord_discount > 0.0:
+                    cost -= chord_discount * (self.w1 * 0.5 + self.w2 * 0.25)
+            elif chord_discount > 0.0:
+                cost -= chord_discount * 0.25
+
+        return max(0.0, cost)
+
+    def estimate_local_chords(
+        self,
+        y: np.ndarray,
+        sr: int,
+        beat_windows: List[Tuple[int, int]],
+    ) -> List[str]:
+        """Estima acordes locales por ventana de beat usando template matching."""
+        if not beat_windows:
+            return []
+
+        hop_length = 256
+        chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=hop_length)
+        if chroma.size == 0:
+            return ["N"] * len(beat_windows)
+
+        max_window_end = max(int(end) for _, end in beat_windows)
+        treat_as_frames = max_window_end <= chroma.shape[1]
+
+        chord_labels: List[str] = []
+        for start, end in beat_windows:
+            if treat_as_frames:
+                frame_start = max(0, int(start))
+                frame_end = min(chroma.shape[1], int(end))
+            else:
+                frame_start = max(0, int(round(start / hop_length)))
+                frame_end = min(chroma.shape[1], int(round(end / hop_length)))
+
+            if frame_end <= frame_start:
+                chord_labels.append("N")
+                continue
+
+            window_chroma = np.mean(chroma[:, frame_start:frame_end], axis=1)
+            if not np.any(np.isfinite(window_chroma)):
+                chord_labels.append("N")
+                continue
+
+            energy = float(np.sum(window_chroma))
+            if energy <= 1e-9:
+                chord_labels.append("N")
+                continue
+
+            window_profile = np.maximum(window_chroma, 0.0)
+            window_profile = window_profile / (np.sum(window_profile) + 1e-9)
+
+            best_label = "N"
+            best_score = -np.inf
+            for root_idx, root_name in enumerate(NOTE_NAMES):
+                for quality, intervals in CHORD_QUALITY_INTERVALS.items():
+                    template = np.zeros(12, dtype=float)
+                    for interval in intervals:
+                        template[(root_idx + interval) % 12] = 1.0
+                    template /= np.sum(template)
+                    score = float(np.dot(window_profile, template))
+                    if score > best_score:
+                        best_score = score
+                        suffix = {
+                            "major": "maj",
+                            "minor": "min",
+                            "dim": "dim",
+                            "dominant": "7",
+                        }[quality]
+                        best_label = f"{root_name}:{suffix}"
+
+            chord_labels.append(best_label)
+
+        return chord_labels
 
     def route_from_midi(
         self,
         midi_sequence: List[Optional[int]],
         articulation_sequence: Optional[List[str]] = None,
+        *,
+        chord_sequence: Optional[List[str]] = None,
     ) -> Tuple[List[State], str]:
-        """Calcula la ruta óptima sobre una secuencia de valores MIDI.
-
-        Para silencio, pase None. Implementa Viterbi con:
-        - Costes de emisión basados en escala (penaliza notas fuera)
-        - Costes de transición con regla del octavo y box shape
-
-        Args:
-            midi_sequence: List of MIDI pitches or None for rests
-            articulation_sequence: Optional list of articulation types
-                ('normal'|'dead'|'legato')
-
-        Retorna (states, tab_ascii).
-        """
+        """Calcula la ruta óptima sobre una secuencia de valores MIDI."""
         if articulation_sequence is None:
             articulation_sequence = ["normal"] * len(midi_sequence)
 
@@ -445,6 +541,11 @@ class FretboardRouter:
                 "articulation_sequence must match midi_sequence length"
             )
 
+        if chord_sequence is None:
+            chord_sequence = [None] * len(midi_sequence)
+        elif len(chord_sequence) != len(midi_sequence):
+            raise ValueError("chord_sequence must match midi_sequence length")
+
         T = len(midi_sequence)
         prev_costs = {}
         prev_ptrs = []
@@ -452,6 +553,8 @@ class FretboardRouter:
         for t in range(T):
             midi = midi_sequence[t]
             articulation = articulation_sequence[t]
+            current_chord = chord_sequence[t]
+            previous_chord = chord_sequence[t - 1] if t > 0 else None
 
             if midi is None or midi == 0:
                 candidates = [State(None, -1, articulation)]
@@ -463,8 +566,7 @@ class FretboardRouter:
 
             if t == 0:
                 for v in candidates:
-                    # Coste de emisión para la nota inicial
-                    emission_cost = self._emission_cost(midi)
+                    emission_cost = self._emission_cost(midi, current_chord)
                     curr_costs[v] = emission_cost
                     curr_ptr[v] = None
             else:
@@ -474,12 +576,15 @@ class FretboardRouter:
                     midi_prev = midi_sequence[t - 1]
 
                     for u, u_cost in prev_costs.items():
-                        # Transición cost con MIDI info para octave/box rules
                         trans_cost = self._transition_cost(
-                            u, v, midi_u=midi_prev, midi_v=midi
+                            u,
+                            v,
+                            midi_u=midi_prev,
+                            midi_v=midi,
+                            previous_chord=previous_chord,
+                            current_chord=current_chord,
                         )
-                        # Coste de emisión para nota actual
-                        emission_cost = self._emission_cost(midi)
+                        emission_cost = self._emission_cost(midi, current_chord)
                         c = u_cost + trans_cost + emission_cost
 
                         if c < best_cost:
@@ -502,6 +607,7 @@ class FretboardRouter:
 
         if not prev_costs:
             return ([], "")
+
         end_state = min(prev_costs.items(), key=lambda kv: kv[1])[0]
         states = [None] * T
         for t in range(T - 1, -1, -1):
@@ -514,29 +620,21 @@ class FretboardRouter:
         return (states, tab)
 
     def estimate_key_and_set_scale(self, y: np.ndarray, sr: int = 22050) -> str:
-        """Estima tonalidad desde audio y configura scale_degrees.
-
-        Args:
-            y: Señal de audio
-            sr: Sample rate
-
-        Returns:
-            Nombre de la tonalidad detectada
-        """
+        """Estima tonalidad desde audio y configura scale_degrees."""
         key_name, _ = estimate_key_from_chroma(y, sr=sr, hop_length=256)
         self.scale_degrees = get_scale_degrees(key_name)
         return key_name
 
     def route_from_f0(
-        self, f0_with_articulation: List[Tuple[float, str]]
+        self,
+        f0_with_articulation: List[Tuple[float, str]],
+        *,
+        y: Optional[np.ndarray] = None,
+        sr: int = 22050,
+        beat_windows: Optional[List[Tuple[int, int]]] = None,
+        chord_sequence: Optional[List[str]] = None,
     ) -> Tuple[List[State], str]:
-        """Convierte f0 con articulation a MIDI y ejecuta el ruteo.
-
-        Args:
-            f0_with_articulation: List of tuples (f0_hz, articulation_type)
-
-        f0==0.0 se considera silencio/rest (None)
-        """
+        """Convierte f0 con articulation a MIDI y ejecuta el ruteo."""
         midi_seq = []
         articulation_seq = []
         for f0_val, articulation in f0_with_articulation:
@@ -546,18 +644,19 @@ class FretboardRouter:
                 midi_seq.append(int(round(librosa.hz_to_midi(float(f0_val)))))
             articulation_seq.append(articulation)
 
-        return self.route_from_midi(midi_seq, articulation_seq)
+        if chord_sequence is None and y is not None and beat_windows is not None:
+            chord_sequence = self.estimate_local_chords(y, sr, beat_windows)
 
-    def f0_to_midi_sequence(
-        self, f0_input: list
-    ) -> list:
-        """Convierte una secuencia de f0 a MIDI entero o None para silencios.
+        return self.route_from_midi(
+            midi_seq,
+            articulation_seq,
+            chord_sequence=chord_sequence,
+        )
 
-        Maneja tanto el formato legacy (floats) como el nuevo (tuples con articulation).
-        """
+    def f0_to_midi_sequence(self, f0_input: list) -> list:
+        """Convierte una secuencia de f0 a MIDI entero o None para silencios."""
         midi_seq = []
         for item in f0_input:
-            # Handle both legacy (float) and new (tuple) formats
             if isinstance(item, tuple):
                 f0_val = item[0]
             else:
@@ -574,11 +673,7 @@ class FretboardRouter:
         midi_sequence: List[Optional[int]],
         states: List[State],
     ) -> List[Dict[str, object]]:
-        """Construye eventos para exportación MusicXML.
-
-        Agrupa beats consecutivos con mismo (midi, cuerda, traste,
-        articulation) en un único evento para representar sustain.
-        """
+        """Construye eventos para exportación MusicXML."""
         if len(midi_sequence) != len(states):
             raise ValueError(
                 "midi_sequence and states must have the same length."
@@ -640,15 +735,10 @@ class FretboardRouter:
         states: List[State],
         midi_sequence: Optional[List[Optional[int]]] = None,
     ) -> str:
-        """Crea representación ASCII con 4 líneas y barras cada 4 beats.
-
-        - Cada carácter representa un pulso/beat (cuantizado).
-        - Inserta barras '|' cada 4 beats para agrupar en compases 4/4.
-        """
+        """Crea representación ASCII con 4 líneas y barras cada 4 beats."""
         if not states:
             return ""
 
-        # Anchura de celda según dígitos de traste
         max_fret = max((s.fret for s in states if s.fret >= 0), default=0)
         cell_w = max(1, len(str(max_fret)))
 
@@ -656,10 +746,8 @@ class FretboardRouter:
         previous_midi = None
 
         for beat_idx, state in enumerate(states):
-            # Cada beat_idx=0,1,2,3 forma un compás; cada beat_idx%4==0 = nueva barra
             if beat_idx > 0 and beat_idx % 4 == 0:
-                # Insertar barra de compás
-                for s_idx in range(1, 5):
+                for s_idx in range(1, self.strings + 1):
                     lines[s_idx].append("|")
 
             current_midi = None
@@ -673,22 +761,17 @@ class FretboardRouter:
                 and current_midi == previous_midi
             )
 
-            # Renderizar la nota de este beat en cada cuerda
             for s_idx in range(1, self.strings + 1):
                 if state.string == s_idx:
                     if state.fret >= 0 and not is_sustain:
-                        # Número de traste, centrado en la celda
                         cell = str(state.fret).rjust(cell_w, " ")
                     else:
-                        # Sustain o descanso en cuerda al aire (oculto)
                         cell = "-" * cell_w
                 else:
-                    # Silencio en esta cuerda
                     cell = "-" * cell_w
                 lines[s_idx].append(cell)
             previous_midi = current_midi
 
-        # Combinar en texto con nombres de cuerda al inicio
         text_lines = []
         for s_idx in range(1, self.strings + 1):
             prefix = self._string_label(s_idx) + "|"
