@@ -52,7 +52,7 @@ def test_pitchtracker_beat_quantization():
     assert len(f0_pulsos) > 0, "No se obtuvieron f0 pulsos"
     assert bpm > 0, "BPM debe ser positivo"
     # La mayoría de pulsos deben ser voiceados (cercanos a 220 Hz)
-    voiced_pulsos = f0_pulsos[f0_pulsos > 0]
+    voiced_pulsos = np.array([f0_val for f0_val, _ in f0_pulsos if f0_val > 0.0])
     assert len(voiced_pulsos) > len(f0_pulsos) * 0.5, "Menos del 50% de pulsos voiceados"
     # Error de mediana en los pulsos voiceados
     median_pulso = float(np.median(voiced_pulsos))
