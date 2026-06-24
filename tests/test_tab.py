@@ -1,5 +1,26 @@
 # tests/test_tab.py
+import pytest
+
 from punkito_tabs_oracle.tab.router import FretboardRouter, State
+
+
+@pytest.fixture(autouse=True)
+def _mock_router_settings(monkeypatch):
+    monkeypatch.setattr(
+        "punkito_tabs_oracle.tab.router.load_settings",
+        lambda _settings_path=None: {
+            "instrument": {
+                "strings": 4,
+                "tuning_midi": [28, 33, 38, 43],
+                "max_fret": 24,
+            },
+            "router_weights": {
+                "w_fret": 1.0,
+                "w_string": 0.5,
+                "w_open": -0.2,
+            },
+        },
+    )
 
 
 def test_router_prefers_open_and_low_frets():
