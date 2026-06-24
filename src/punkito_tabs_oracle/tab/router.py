@@ -14,6 +14,7 @@ Implementa un topología Viterbi consciente de escala y armonía local:
 
 Comentarios en español.
 """
+import logging
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
@@ -25,6 +26,8 @@ from music21 import pitch as pitch_module
 
 from punkito_tabs_oracle.settings import load_settings
 
+
+logger = logging.getLogger(__name__)
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 NOTE_TO_IDX = {note: idx for idx, note in enumerate(NOTE_NAMES)}
@@ -224,8 +227,8 @@ class FretboardRouter:
         )
 
         # shape_offsets: quality -> interval class -> (string_delta, fret_delta)
-        # string_delta usa el convenio interno: valores negativos suben a la
-        # cuerda más aguda; fret_delta modela el desplazamiento horizontal típico.
+        # string_delta negativo = cuerda de menor índice (más aguda); fret_delta
+        # modela el desplazamiento horizontal típico del shape.
         self.shape_offsets = {
             "major": {0: (0, 0), 4: (-1, -1), 7: (-1, 2), 11: (-1, 1)},
             "minor": {0: (0, 0), 3: (-1, 0), 7: (-1, 2), 10: (-1, 1)},
@@ -297,6 +300,10 @@ class FretboardRouter:
         elif quality_key in {"dom", "dominant", "7", "dom7", "7th"}:
             quality = "dominant"
         else:
+            logger.warning(
+                "Unrecognized chord quality '%s'; falling back to major.",
+                quality_key,
+            )
             # Fallback explícito: asumimos triada mayor cuando la calidad no
             # está reconocida para no romper el routing en etiquetas ambiguas.
             quality = "major"
@@ -459,10 +466,11 @@ class FretboardRouter:
                 shape_bonus = max(0.0, 1.0 - 0.25 * delta_error)
                 cost -= self.w1 * 0.5 * shape_bonus
 
-                if chord_discount > 0.0:
+            if chord_discount > 0.0:
+                if preferred_delta is not None:
                     cost -= chord_discount * (self.w1 * 0.5 + self.w2 * 0.25)
-            elif chord_discount > 0.0:
-                cost -= chord_discount * 0.25
+                else:
+                    cost -= chord_discount * 0.25
 
         return max(0.0, cost)
 
@@ -485,9 +493,9 @@ class FretboardRouter:
         if not window_ends:
             return ["N"] * len(beat_windows)
 
-        max_window_end = max(window_ends, default=0)
-        # Si los límites parecen venir ya en frames, evitamos reescalarlos;
-        # si exceden la resolución del cromagrama, los interpretamos como samples.
+        max_window_end = max(window_ends)
+        # Heurística conservadora: si los límites caben dentro del cromagrama,
+        # asumimos frame indices; si exceden esa resolución, los tratamos como samples.
         treat_as_frames = max_window_end <= chroma.shape[1]
 
         chord_labels: List[str] = []
@@ -513,8 +521,7 @@ class FretboardRouter:
                 chord_labels.append("N")
                 continue
 
-            window_profile = np.maximum(window_chroma, 0.0)
-            window_profile = window_profile / (np.sum(window_profile) + 1e-9)
+            window_profile = window_chroma / (np.sum(window_chroma) + 1e-9)
 
             best_label = "N"
             best_score = -np.inf
@@ -525,7 +532,8 @@ class FretboardRouter:
                         template[(root_idx + interval) % 12] = 1.0
                     template /= np.sum(template)
                     # Dot product sobre perfiles normalizados: template matching
-                    # simple y estable para triadas/7ths sin coste extra de correlación.
+                    # simple y estable para triadas mayores/menores/disminuidas y
+                    # acordes dominantes sin coste extra de correlación.
                     score = float(np.dot(window_profile, template))
                     if score > best_score:
                         best_score = score
