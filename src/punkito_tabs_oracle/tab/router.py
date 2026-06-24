@@ -353,6 +353,11 @@ class FretboardRouter:
             return 0.0
 
         root_pc, quality = parsed
+        if quality not in CHORD_QUALITY_INTERVALS:
+            logger.warning(
+                "Unknown chord quality '%s' in emission bonus; falling back to major.",
+                quality,
+            )
         chord_intervals = CHORD_QUALITY_INTERVALS.get(quality, CHORD_QUALITY_INTERVALS["major"])
         interval = (midi - root_pc) % 12
         if interval not in chord_intervals:
@@ -472,7 +477,9 @@ class FretboardRouter:
                 else:
                     cost -= chord_discount * 0.25
 
-        return max(0.0, cost)
+        # Permitimos costes negativos: los descuentos modelan priors reales y
+        # no deben quedar recortados, porque eso aplana la señal del Viterbi.
+        return cost
 
     def estimate_local_chords(
         self,
@@ -480,7 +487,12 @@ class FretboardRouter:
         sr: int,
         beat_windows: List[Tuple[int, int]],
     ) -> List[str]:
-        """Estima acordes locales por ventana de beat usando template matching."""
+        """Estima acordes locales por ventana de beat usando template matching.
+
+        beat_windows puede venir ya en frames del cromagrama o en muestras; el
+        método infiere la unidad a partir del rango observado para mantener
+        compatibilidad con distintos beat trackers.
+        """
         if not beat_windows:
             return []
 
@@ -532,8 +544,9 @@ class FretboardRouter:
                         template[(root_idx + interval) % 12] = 1.0
                     template /= np.sum(template)
                     # Dot product sobre perfiles normalizados: template matching
-                    # simple y estable para triadas mayores/menores/disminuidas y
-                    # acordes dominantes sin coste extra de correlación.
+                    # simple y estable; con perfiles normalizados equivale a una
+                    # similitud de coseno barata para triadas mayores/menores/
+                    # disminuidas y acordes dominantes.
                     score = float(np.dot(window_profile, template))
                     if score > best_score:
                         best_score = score
@@ -658,7 +671,12 @@ class FretboardRouter:
         beat_windows: Optional[List[Tuple[int, int]]] = None,
         chord_sequence: Optional[List[str]] = None,
     ) -> Tuple[List[State], str]:
-        """Convierte f0 con articulation a MIDI y ejecuta el ruteo."""
+        """Convierte f0 con articulation a MIDI y ejecuta el ruteo.
+
+        Si chord_sequence no se pasa pero y + beat_windows están disponibles,
+        el router estima acordes locales automáticamente para alimentar el
+        Viterbi chord-aware.
+        """
         midi_seq = []
         articulation_seq = []
         for f0_val, articulation in f0_with_articulation:
