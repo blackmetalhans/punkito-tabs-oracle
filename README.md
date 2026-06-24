@@ -62,12 +62,14 @@ punkito-tabs-oracle/
 ## 🚀 Installation & Setup
 
 ### Requirements
-- **Python 3.10** (required for dependency compatibility)
-- `ffmpeg` available in system PATH
+- Python: CPython 3.10 (strict). The package is tested for and requires Python 3.10; other minor versions (3.9, 3.11+) are unsupported.
+- System dependency: `ffmpeg` must be installed and available on the system PATH.
 
 ### Install
 
 ```bash
+# create and activate a Python 3.10 virtual environment on Windows
+python -m venv .venv && .venv\Scripts\activate
 pip install -e .[dev]
 ```
 

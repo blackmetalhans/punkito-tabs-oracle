@@ -30,7 +30,8 @@ Milestone 1 introduced articulation-aware monophonic bass transcription in the e
 ### `src/punkito_tabs_oracle/dsp/pitch.py`
 - Added `_detect_ghost_notes()`
 - Added `_detect_legato()`
-- Refactored `obtener_f0_por_pulso()` to return articulation-aware beat tuples
+- Added `detect_slides()` (frame-level slide region detection) and integrated slide regions into beat-level aggregation
+- Refactored `obtener_f0_por_pulso()` to return articulation-aware beat tuples `(f0_hz, articulation_type)`
 - Kept backward compatibility via `obtener_f0_por_pulso_legacy()`
 
 ### `src/punkito_tabs_oracle/tab/router.py`
@@ -60,10 +61,15 @@ Milestone 1 introduced articulation-aware monophonic bass transcription in the e
 
 ## Configuration and Tunables
 
-Milestone documentation identifies DSP thresholds used for articulation behavior:
+Milestone documentation identifies DSP thresholds and settings (in `config/settings.toml`) used for articulation behavior. Key parameters:
 
-- `voiced_confidence_threshold` from `config/settings.toml`
-- `ghost_spectral_flatness_threshold` from `config/settings.toml` (default `0.5`), used with onset activity and voicing confidence to classify ghost notes
+- `voiced_confidence_threshold` (float) — pYIN voiced-prob threshold used to decide voiced frames (default: `0.05`).
+- `ghost_spectral_flatness_threshold` (float) — spectral flatness threshold for ghost/dead-note detection (default: `0.5`).
+- `slide_pitch_change_threshold_hz` (float) — minimum pitch change rate (Hz/frame) to consider a slide region.
+- `slide_min_duration_frames` (int) — minimum consecutive frames for a slide region to be considered (default: `3`).
+- `ghost_onset_voicing_balance` (float) — weighting factor between onset detection and voicedness when classifying ghosts.
+
+These parameters are read from `config/settings.toml` under `[dsp]` and may be tuned without changing code. The pipeline now integrates `detect_slides()` during frame-level analysis; detected slide regions are used when aggregating beat-level articulations to optionally mark beats as `slide` or to annotate transition metadata.
 
 ## Verification and Coverage (as reported in milestone documents)
 

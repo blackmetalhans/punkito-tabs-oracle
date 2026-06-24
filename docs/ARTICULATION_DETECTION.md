@@ -322,16 +322,26 @@ Constructs a Part with:
 
 ### DSP Thresholds (config/settings.toml)
 
+The DSP stage reads thresholds and behaviour flags from `config/settings.toml` under `[dsp]`. Key tunables:
+
 ```toml
 [dsp]
-# ... existing settings ...
-# Ghost note detection is built-in; uses pYIN's voiced_confidence_threshold:
-voiced_confidence_threshold = 0.05
-# (Low threshold = more lenient on voicing, catches more ghosts)
-
-# Spectral flatness threshold for ghost note detection is hard-coded to 0.5
-# (Adjust in pitch.py if needed)
+voiced_confidence_threshold = 0.05            # pYIN voiced-prob threshold
+ghost_spectral_flatness_threshold = 0.5       # spectral flatness for ghost notes
+slide_pitch_change_threshold_hz = 5.0         # Hz/frame pitch-change threshold for slides
+slide_min_duration_frames = 3                 # minimum consecutive frames to declare a slide
+ghost_onset_voicing_balance = 0.5             # balance between onset energy and voicedness for ghost detection
 ```
+
+Notes:
+- `detect_slides()` is implemented in `PitchTracker` and is integrated into the frame→beat aggregation performed by `obtener_f0_por_pulso()`. Slide regions are reported and may annotate beats as `slide` or be used to avoid marking a transition as `legato` when a slide is present.
+
+- NaN / gradient interaction (implementation note): the DSP replaces non-voiced or zero f0 frames with `np.nan` before computing pitch derivatives. Computing `np.gradient()` over arrays containing NaNs propagates NaNs and can suppress legitimate derivative values. The implemented mitigation is:
+  1. Fill short internal NaN gaps by cubic interpolation (scipy.interpolate.interp1d or pandas.Series.interpolate(method='cubic')) to obtain a continuous pitch contour for derivative estimation.
+  2. Cap or fall back to linear interpolation for long, edge, or ill-conditioned gaps to avoid producing NaNs.
+  3. Compute `np.gradient()` on the interpolated contour and then consult original voiced masks to decide whether derivatives are valid for articulation detection.
+
+This approach avoids false-negative legato detection caused by NaN propagation while preserving explicit non-voiced frames for downstream routing and export.
 
 ### Ghost Note Detection Tuning
 
@@ -455,7 +465,7 @@ f0_with_art = [
 
 ## Future Enhancements (Milestone 2+)
 
-- **Slide Detection**: Pitch ramps with consistent velocity
+- **Slide Detection**: (Implemented) frame-level slide region detection (`detect_slides()`) is now part of the PitchTracker and integrated into beat aggregation; further improvements will focus on velocity-based slide classification and duration quantization.
 - **Bend Detection**: Pitch excursions beyond quantized fret
 - **Harmonics**: High-frequency components without fundamental
 - **Polyphonic Voicing**: Multi-note chords with independent articulation per note
