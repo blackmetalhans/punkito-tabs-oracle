@@ -62,6 +62,7 @@ DEFAULT_SHAPE_OFFSETS: Dict[str, Dict[int, Tuple[int, int]]] = {
 DEFAULT_HARMONIC_RESOLUTION_DISCOUNT = 0.35
 DEFAULT_CHORD_EMISSION_DISCOUNT = 0.12
 DEFAULT_SHAPE_MATCH_DECAY = 0.25
+DEFAULT_WINDOW_UNIT_THRESHOLD = 0.5
 
 
 def estimate_key_from_chroma(
@@ -364,7 +365,7 @@ class FretboardRouter:
             return DEFAULT_CHORD_EMISSION_DISCOUNT * 0.75
         return DEFAULT_CHORD_EMISSION_DISCOUNT * 0.5
 
-    def _emission_cost(self, midi: Optional[int], chord_label: Optional[str] = None) -> float:
+    def _emission_cost(self, midi: Optional[int]) -> float:
         """Calcula el coste de emisión para un MIDI (penalización por fuera de escala)."""
         if midi is None:
             return 0.0
@@ -373,6 +374,13 @@ class FretboardRouter:
         if not is_midi_in_scale(midi, self.scale_degrees):
             cost += self.w_scale_penalty
 
+        return cost
+
+    def _chord_aware_emission_cost(
+        self, midi: Optional[int], chord_label: Optional[str] = None
+    ) -> float:
+        """Coste de emisión base + priors armónicos locales."""
+        cost = self._emission_cost(midi)
         cost -= self._chord_emission_bonus(midi, chord_label)
         return cost
 
@@ -415,10 +423,20 @@ class FretboardRouter:
         v: State,
         midi_u: Optional[int] = None,
         midi_v: Optional[int] = None,
+    ) -> float:
+        """Compatibilidad retroactiva: transición sin priors armónicos."""
+        return self._transition_cost_chord_aware(u, v, midi_u=midi_u, midi_v=midi_v)
+
+    def _transition_cost_chord_aware(
+        self,
+        u: State,
+        v: State,
+        midi_u: Optional[int] = None,
+        midi_v: Optional[int] = None,
         previous_chord: Optional[str] = None,
         current_chord: Optional[str] = None,
     ) -> float:
-        """Calcula el coste de transición entre dos estados."""
+        """Calcula el coste de transición entre dos estados con contexto armónico."""
         if u.string is None or v.string is None:
             return 0.0
 
@@ -485,8 +503,9 @@ class FretboardRouter:
         """Estima acordes locales por ventana de beat usando template matching.
 
         beat_windows puede venir ya en frames del cromagrama o en muestras; el
-        método infiere la unidad a partir del rango observado para mantener
-        compatibilidad con distintos beat trackers.
+        método infiere la unidad por magnitud para compatibilidad con trackers
+        legacy. Si el caller mezcla unidades o usa ventanas muy cortas/largas
+        fuera de esa heurística, debe normalizar explícitamente antes de llamar.
         """
         if not beat_windows:
             return []
@@ -502,8 +521,10 @@ class FretboardRouter:
 
         max_window_end = max(window_ends)
         # Heurística basada en magnitud: los samples suelen ser ~hop_length veces
-        # más grandes que los frames, así que usamos un umbral intermedio.
-        frame_like_threshold = chroma.shape[1] * max(1, hop_length // 2)
+        # más grandes que los frames, así que usamos un umbral intermedio fijo.
+        frame_like_threshold = chroma.shape[1] * max(
+            1, int(hop_length * DEFAULT_WINDOW_UNIT_THRESHOLD)
+        )
         treat_as_frames = max_window_end <= frame_like_threshold
 
         chord_labels: List[str] = []
@@ -539,10 +560,8 @@ class FretboardRouter:
                     for interval in intervals:
                         template[(root_idx + interval) % 12] = 1.0
                     template /= np.sum(template)
-                    # Dot product sobre perfiles normalizados: template matching
-                    # simple y estable; con perfiles normalizados equivale a una
-                    # similitud de coseno barata para triadas mayores/menores/
-                    # disminuidas y acordes dominantes.
+                    # Dot product sobre perfiles normalizados: es una similitud
+                    # de coseno barata para triadas y dominantes sin coste extra.
                     score = float(np.dot(window_profile, template))
                     if score > best_score:
                         best_score = score
@@ -599,7 +618,7 @@ class FretboardRouter:
 
             if t == 0:
                 for v in candidates:
-                    emission_cost = self._emission_cost(midi, current_chord)
+                    emission_cost = self._chord_aware_emission_cost(midi, current_chord)
                     curr_costs[v] = emission_cost
                     curr_ptr[v] = None
             else:
@@ -609,7 +628,7 @@ class FretboardRouter:
                     midi_prev = midi_sequence[t - 1]
 
                     for u, u_cost in prev_costs.items():
-                        trans_cost = self._transition_cost(
+                        trans_cost = self._transition_cost_chord_aware(
                             u,
                             v,
                             midi_u=midi_prev,
@@ -617,7 +636,9 @@ class FretboardRouter:
                             previous_chord=previous_chord,
                             current_chord=current_chord,
                         )
-                        emission_cost = self._emission_cost(midi, current_chord)
+                        emission_cost = self._chord_aware_emission_cost(
+                            midi, current_chord
+                        )
                         c = u_cost + trans_cost + emission_cost
 
                         if c < best_cost:
