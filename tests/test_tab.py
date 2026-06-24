@@ -1,5 +1,26 @@
 # tests/test_tab.py
+import pytest
+
 from punkito_tabs_oracle.tab.router import FretboardRouter, State
+
+
+@pytest.fixture(autouse=True)
+def _mock_router_settings(monkeypatch):
+    monkeypatch.setattr(
+        "punkito_tabs_oracle.tab.router.load_settings",
+        lambda _settings_path=None: {
+            "instrument": {
+                "strings": 4,
+                "tuning_midi": [28, 33, 38, 43],
+                "max_fret": 24,
+            },
+            "router_weights": {
+                "w_fret": 1.0,
+                "w_string": 0.5,
+                "w_open": -0.2,
+            },
+        },
+    )
 
 
 def test_router_prefers_open_and_low_frets():
@@ -26,7 +47,16 @@ def test_router_prefers_open_and_low_frets():
 def test_router_beat_quantized_with_bars():
     """Verificar que el ruteador renderiza compases con barras cada 4 beats en formato 4/4."""
     # Secuencia de 8 beats (2 compases): 28 (E), 33 (A), 45 (A), 40 (E), 28 (E), 33 (A), 45 (A), 40 (E)
-    f0_pulsos = [82.41, 110.0, 220.0, 164.81, 82.41, 110.0, 220.0, 164.81]  # Hz
+    f0_pulsos = [
+        (82.41, "normal"),
+        (110.0, "normal"),
+        (220.0, "normal"),
+        (164.81, "normal"),
+        (82.41, "normal"),
+        (110.0, "normal"),
+        (220.0, "normal"),
+        (164.81, "normal"),
+    ]  # Hz
     router = FretboardRouter()
     states, tab = router.route_from_f0(f0_pulsos)
 
@@ -88,12 +118,14 @@ def test_router_builds_musicxml_route_with_sustain_grouping():
         "string_index": 4,
         "fret_number": 0,
         "duration_in_beats": 2.0,
+        "articulation_type": "normal",
     }
     assert route[1] == {
         "midi_pitch": None,
         "string_index": None,
         "fret_number": None,
         "duration_in_beats": 2.0,
+        "articulation_type": "normal",
     }
     assert route[2]["midi_pitch"] == 33
     assert route[2]["duration_in_beats"] == 1.0
