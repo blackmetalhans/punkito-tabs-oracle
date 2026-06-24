@@ -51,6 +51,17 @@ CHORD_QUALITY_INTERVALS = {
     "dim": (0, 3, 6),
     "dominant": (0, 4, 7, 10),
 }
+DEFAULT_SHAPE_OFFSETS: Dict[str, Dict[int, Tuple[int, int]]] = {
+    # Interval class keys are chord-tone intervals from the local root.
+    # Values are ergonomic target deltas in (string_delta, fret_delta).
+    "major": {0: (0, 0), 4: (-1, -1), 7: (-1, 2), 11: (-1, 1)},
+    "minor": {0: (0, 0), 3: (-1, 0), 7: (-1, 2), 10: (-1, 1)},
+    "dim": {0: (0, 0), 3: (-1, 0), 6: (-1, 1)},
+    "dominant": {0: (0, 0), 4: (-1, -1), 7: (-1, 2), 10: (-1, 1)},
+}
+DEFAULT_HARMONIC_RESOLUTION_DISCOUNT = 0.35
+DEFAULT_CHORD_EMISSION_DISCOUNT = 0.12
+DEFAULT_SHAPE_MATCH_DECAY = 0.25
 
 
 def estimate_key_from_chroma(
@@ -226,18 +237,7 @@ class FretboardRouter:
             else 0.4
         )
 
-        # shape_offsets: quality -> interval class -> (string_delta, fret_delta)
-        # string_delta negativo = cuerda de menor índice (más aguda); fret_delta
-        # modela el desplazamiento horizontal típico del shape.
-        self.shape_offsets = {
-            "major": {0: (0, 0), 4: (-1, -1), 7: (-1, 2), 11: (-1, 1)},
-            "minor": {0: (0, 0), 3: (-1, 0), 7: (-1, 2), 10: (-1, 1)},
-            "dim": {0: (0, 0), 3: (-1, 0), 6: (-1, 1)},
-            "dominant": {0: (0, 0), 4: (-1, -1), 7: (-1, 2), 10: (-1, 1)},
-        }
-        # Valores conservadores para no eclipsar las heurísticas existentes.
-        self._harmonic_resolution_discount = 0.35
-        self._chord_emission_discount = 0.12
+        self.shape_offsets = DEFAULT_SHAPE_OFFSETS
 
     def _quantize_duration(self, duration_in_beats: float) -> float:
         """Snap durations to the strict micro-beat grid used by the exporter."""
@@ -301,12 +301,12 @@ class FretboardRouter:
             quality = "dominant"
         else:
             logger.warning(
-                "Unrecognized chord quality '%s'; falling back to major.",
+                "Unrecognized chord quality '%s'; skipping chord-aware priors.",
                 quality_key,
             )
-            # Fallback explícito: asumimos triada mayor cuando la calidad no
-            # está reconocida para no romper el routing en etiquetas ambiguas.
-            quality = "major"
+            # Calidad desconocida: optamos por no inyectar priors armónicos
+            # erróneos y dejamos que el routing siga con la información diatónica.
+            return None
 
         return root_pc, quality
 
@@ -338,9 +338,9 @@ class FretboardRouter:
         strong_resolution = circle_distance == 1 and semitone_motion in {5, 7}
 
         if strong_resolution:
-            return self._harmonic_resolution_discount
+            return DEFAULT_HARMONIC_RESOLUTION_DISCOUNT
         if circle_distance == 2 and semitone_motion in {5, 7}:
-            return self._harmonic_resolution_discount * 0.5
+            return DEFAULT_HARMONIC_RESOLUTION_DISCOUNT * 0.5
         return 0.0
 
     def _chord_emission_bonus(self, midi: Optional[int], chord_label: Optional[str]) -> float:
@@ -353,21 +353,16 @@ class FretboardRouter:
             return 0.0
 
         root_pc, quality = parsed
-        if quality not in CHORD_QUALITY_INTERVALS:
-            logger.warning(
-                "Unknown chord quality '%s' in emission bonus; falling back to major.",
-                quality,
-            )
         chord_intervals = CHORD_QUALITY_INTERVALS.get(quality, CHORD_QUALITY_INTERVALS["major"])
         interval = (midi - root_pc) % 12
         if interval not in chord_intervals:
             return 0.0
 
         if interval == 0:
-            return self._chord_emission_discount
+            return DEFAULT_CHORD_EMISSION_DISCOUNT
         if interval in {3, 4, 7}:
-            return self._chord_emission_discount * 0.75
-        return self._chord_emission_discount * 0.5
+            return DEFAULT_CHORD_EMISSION_DISCOUNT * 0.75
+        return DEFAULT_CHORD_EMISSION_DISCOUNT * 0.5
 
     def _emission_cost(self, midi: Optional[int], chord_label: Optional[str] = None) -> float:
         """Calcula el coste de emisión para un MIDI (penalización por fuera de escala)."""
@@ -468,7 +463,7 @@ class FretboardRouter:
                 delta_error = abs(string_delta - preferred_string_delta) + abs(
                     fret_delta - preferred_fret_delta
                 )
-                shape_bonus = max(0.0, 1.0 - 0.25 * delta_error)
+                shape_bonus = max(0.0, 1.0 - DEFAULT_SHAPE_MATCH_DECAY * delta_error)
                 cost -= self.w1 * 0.5 * shape_bonus
 
             if chord_discount > 0.0:
@@ -506,9 +501,10 @@ class FretboardRouter:
             return ["N"] * len(beat_windows)
 
         max_window_end = max(window_ends)
-        # Heurística conservadora: si los límites caben dentro del cromagrama,
-        # asumimos frame indices; si exceden esa resolución, los tratamos como samples.
-        treat_as_frames = max_window_end <= chroma.shape[1]
+        # Heurística basada en magnitud: los samples suelen ser ~hop_length veces
+        # más grandes que los frames, así que usamos un umbral intermedio.
+        frame_like_threshold = chroma.shape[1] * max(1, hop_length // 2)
+        treat_as_frames = max_window_end <= frame_like_threshold
 
         chord_labels: List[str] = []
         for start, end in beat_windows:
