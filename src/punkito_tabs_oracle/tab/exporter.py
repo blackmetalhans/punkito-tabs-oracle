@@ -3,7 +3,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Optional, Sequence, Tuple, Union, List
+from typing import List, Mapping, Optional, Sequence, Tuple, Union
 
 from music21 import articulations, clef, duration, instrument, meter, note, pitch, stream, tempo, spanner
 
@@ -132,23 +132,21 @@ class MusicXMLExporter:
         return staff_details
 
     def build_part(self) -> stream.Part:
-        """Builds a Part with proper articulation handling (dead notes, slurs)."""
+        """Builds a Part with proper articulation handling (dead notes, slurs, glissandos)."""
         part = stream.Part()
         part.append(instrument.ElectricBass())
         part.insert(0, meter.TimeSignature("4/4"))
         part.insert(0, tempo.MetronomeMark(number=self.tempo_bpm))
         part.insert(0, clef.BassClef())
 
-        # Track legato sequences for slur rendering
-        legato_sequence: List[note.Note] = []
+        # Track legato sequences for slur/glissando rendering
+        legato_sequence: List[Tuple[note.Note, int, int]] = []  # (note, string_index, fret_number)
 
         for item in self.route_items:
             ql = self._to_quarter_length(item.duration_in_beats)
             if item.midi_pitch is None or item.string_index is None or item.fret_number is None:
                 # Flush any pending legato sequence
-                if legato_sequence and len(legato_sequence) > 1:
-                    slur = spanner.Slur(legato_sequence)
-                    part.append(slur)
+                self._flush_legato_sequence(part, legato_sequence)
                 legato_sequence = []
 
                 rest = note.Rest()
@@ -164,7 +162,7 @@ class MusicXMLExporter:
             if item.articulation_type == "dead":
                 n.notehead = "x"
             elif item.articulation_type == "legato":
-                legato_sequence.append(n)
+                legato_sequence.append((n, int(item.string_index), int(item.fret_number)))
 
             # Always add string and fret metadata
             internal_idx = int(item.string_index)
@@ -177,17 +175,68 @@ class MusicXMLExporter:
 
             # If not legato, flush the legato sequence
             if item.articulation_type != "legato":
-                if legato_sequence and len(legato_sequence) > 1:
-                    slur = spanner.Slur(legato_sequence)
-                    part.append(slur)
+                self._flush_legato_sequence(part, legato_sequence)
                 legato_sequence = []
 
         # Final flush of pending legato
-        if legato_sequence and len(legato_sequence) > 1:
-            slur = spanner.Slur(legato_sequence)
-            part.append(slur)
+        self._flush_legato_sequence(part, legato_sequence)
 
         return part
+
+    def _flush_legato_sequence(
+        self, part: stream.Part, legato_sequence: List[Tuple[note.Note, int, int]]
+    ) -> None:
+        """Flush a legato sequence as either a Glissando (slide) or Slur.
+        
+        If notes change fret on the same string → Glissando (slide).
+        If notes maintain same pitch/fret → no spanner (just sustain).
+        Otherwise → Slur (simple legato).
+        """
+        if not legato_sequence or len(legato_sequence) < 2:
+            return
+
+        notes = [item[0] for item in legato_sequence]
+        
+        # Check if this is a slide: changing frets on the same string
+        is_slide = self._is_slide_sequence(legato_sequence)
+        
+        if is_slide:
+            # Use Glissando for slides
+            for i in range(len(notes) - 1):
+                gliss = spanner.Glissando(notes[i], notes[i + 1])
+                gliss.lineType = "solid"
+                part.append(gliss)
+        else:
+            # Check if all notes have the same pitch (sustain, no spanner needed)
+            all_same_pitch = all(
+                notes[i].pitch.midi == notes[0].pitch.midi for i in range(len(notes))
+            )
+            if not all_same_pitch:
+                # Use Slur for simple legato articulation
+                slur = spanner.Slur(notes)
+                part.append(slur)
+
+    def _is_slide_sequence(self, legato_sequence: List[Tuple[note.Note, int, int]]) -> bool:
+        """Determine if a legato sequence represents a slide (glissando).
+        
+        Returns True if notes are on the same string with changing frets.
+        """
+        if len(legato_sequence) < 2:
+            return False
+        
+        # Extract string and fret info
+        first_string = legato_sequence[0][1]
+        
+        # Check if all notes are on the same string
+        same_string = all(item[1] == first_string for item in legato_sequence)
+        if not same_string:
+            return False
+        
+        # Check if frets are changing
+        frets = [item[2] for item in legato_sequence]
+        changing_frets = not all(fret == frets[0] for fret in frets)
+        
+        return changing_frets
 
     def write(self, filepath: Union[str, Path]) -> str:
         """Escribe el MusicXML al filepath indicado y devuelve la ruta escrita."""

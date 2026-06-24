@@ -1,7 +1,9 @@
 # tests/test_tab.py
 import pytest
+from music21 import spanner
 
 from punkito_tabs_oracle.tab.router import FretboardRouter, State
+from punkito_tabs_oracle.tab.exporter import MusicXMLExporter
 
 
 @pytest.fixture(autouse=True)
@@ -129,3 +131,56 @@ def test_router_builds_musicxml_route_with_sustain_grouping():
     }
     assert route[2]["midi_pitch"] == 33
     assert route[2]["duration_in_beats"] == 1.0
+
+
+def test_musicxml_exporter_creates_glissando_for_slides(monkeypatch):
+    """Test that ascending f0 on same string creates Glissando, not Slur."""
+    monkeypatch.setattr(
+        "punkito_tabs_oracle.tab.exporter.load_settings",
+        lambda _settings_path=None: {
+            "instrument": {
+                "strings": 4,
+                "tuning_midi": [28, 33, 38, 43],
+                "max_fret": 24,
+            }
+        },
+    )
+    
+    # Simulate a slide: E1 (28) to F1 (29) to F#1 (30) on same string (4th string)
+    # All marked as "legato" to trigger slide detection
+    route_items = [
+        {
+            "midi_pitch": 28,
+            "string_index": 4,
+            "fret_number": 0,
+            "duration_in_beats": 1.0,
+            "articulation_type": "legato",
+        },
+        {
+            "midi_pitch": 29,
+            "string_index": 4,
+            "fret_number": 1,
+            "duration_in_beats": 1.0,
+            "articulation_type": "legato",
+        },
+        {
+            "midi_pitch": 30,
+            "string_index": 4,
+            "fret_number": 2,
+            "duration_in_beats": 1.0,
+            "articulation_type": "legato",
+        },
+    ]
+    
+    exporter = MusicXMLExporter(route_items, tempo_bpm=120)
+    part = exporter.build_part()
+    
+    # Verify that we have Glissando spanners, not Slur
+    glissandos = [elem for elem in part if isinstance(elem, spanner.Glissando)]
+    slurs = [elem for elem in part if isinstance(elem, spanner.Slur)]
+    
+    assert len(glissandos) > 0, "Expected at least one Glissando for slide sequence"
+    assert len(slurs) == 0, "Expected no Slur for slide sequence"
+    
+    # Verify glissando connects consecutive notes
+    assert len(glissandos) == 2, "Expected 2 Glissandos for 3-note slide"
